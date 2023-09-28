@@ -1,11 +1,9 @@
 
-MobilityStream
+MobilityAPI
 ===============
-An open source geospatial trajectory data stream management platform
+An open source implementation of the [OGC](https://www.ogc.org/) [Moving-Features API](https://ogcapi.ogc.org/movingfeatures/overview.html) based on [MobilityDB](https://github.com/MobilityDB/MobilityDB/)
 
 <img src="doc/images/mobilitydb-logo.svg" width="200" alt="MobilityDB Logo" />
-
-MobilityStream is a data stream management system for moving object geospatial trajectories, such as GPS traces. It adds streaming capabilities to the [MobilityDB](https://github.com/MobilityDB/MobilityDB/) geospatial trajectory data management & analysis platform.
 
 MobilityDB is developed by the Computer & Decision Engineering Department of the [Université libre de Bruxelles](https://www.ulb.be/) (ULB) under the direction of [Prof. Esteban Zimányi](http://cs.ulb.ac.be/members/esteban/). ULB is an OGC Associate Member and member of the OGC Moving Feature Standard Working Group ([MF-SWG](https://www.ogc.org/projects/groups/movfeatswg)).
 

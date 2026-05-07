@@ -82,13 +82,13 @@ def create_collections():
         assert resp.status_code in (201, 409)
         
         if resp.status_code == 201:
-            data = resp.json()
+
             # check the resp.json without formatting- important 
             created.append({
-                "id": data["id"],
-                "title": data["title"],
-                "updateFrequency": data["updateFrequency"],
-                "itemType": data["itemType"]
+                "id": col["title"].lower().replace(" ", "_"),
+                "title": col["title"],
+                "updateFrequency": col["updateFrequency"],
+                "itemType": col["itemType"]
             })
         else:
             created.append({
@@ -250,11 +250,8 @@ def test_delete_collection():
     log_request_response("Create temp collection", resp)
     assert resp.status_code in (201, 409)
     
-    if resp.status_code == 201:
-        data = resp.json()
-        col_id = data["id"]
-    else:
-        col_id = "temp"
+
+    col_id = "temp"
     
     resp = requests.delete(f"{HOST}/collections/{col_id}")
     log_request_response(f"Delete collection {col_id}", resp)

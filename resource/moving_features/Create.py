@@ -3,8 +3,7 @@
 import uuid
 import json
 from psycopg2 import sql
-from pymeos import TGeomPoint, TGeomPointSeq
-
+import traceback
 def post_collection_items(self, collection_id, connection, cursor):
     try:
         content_length = int(self.headers.get("Content-Length", 0))
@@ -62,6 +61,9 @@ def post_collection_items(self, collection_id, connection, cursor):
         self.wfile.write(bytes(json.dumps(response), "utf-8"))
 
     except Exception as e:
+        connection.rollback()
+        print(f"Error in post_tproperties: {e}")
+        traceback.print_exc()
         msg = str(e)
         if "does not exist" in msg:
             code = 404
@@ -87,56 +89,27 @@ def insert_feature(self, feature, collection_id, connection, cursor):
         feat_id = str(feat_id)
     bbox_calculated = None
     time_range_calculated = None
-    tgeom = None
+
 
     # *convert temporalGeometry to TGeomPoint
     temporal_geometry = feature.get("temporalGeometry")
-    tgeom_str = None
-    tgeomsql=None
+    tgeom_mfjson=None
     if temporal_geometry:#either tempGeom os given as dict or json to str
         if isinstance(temporal_geometry, dict):
-            tgeom = TGeomPointSeq.from_mfjson(json.dumps(temporal_geometry))
-            tgeomsql= json.dumps(temporal_geometry)
-            tgeom_str = str(tgeom)
+            tgeom_mfjson= json.dumps(temporal_geometry)
         elif isinstance(temporal_geometry, str):
-            tgeom = TGeomPointSeq.from_mfjson(temporal_geometry)
-            tgeomsql= temporal_geometry
-            tgeom_str = str(tgeom)
-    if tgeom:
-        # geometry_geojson = tgeom.as_geojson(srs="EPSG:25832")  #works 1 over 2
-        # bounding box
-        stbox = tgeom.bounding_box()
-        # space range
-        bbox_calculated = [
-            stbox.xmin(), 
-            stbox.ymin(), 
-            stbox.xmax(),  
-            stbox.ymax()  
-        ]
+            tgeom_mfjson = temporal_geometry
+        
         # time range
-        time_range_calculated = [stbox.tmin().isoformat(), stbox.tmax().isoformat()]
+        # time_range_calculated = [stbox.tmin().isoformat(), stbox.tmax().isoformat()]
         
     properties = feature.get("properties", {})
-    geometry = feature.get("geometry")
-    bbox = feature.get("bbox")
     #mf life span time range:
     time_range = feature.get("time")
     crs = feature.get("crs")
     trs = feature.get("trs")
 
-
-    if bbox is None and bbox_calculated:
-        bbox = bbox_calculated
-
-    if time_range is None and time_range_calculated:
-        time_range = time_range_calculated
-    # Format time as tstzrange if provided
-    time_str = None
-    # time [stat, end]
-    if time_range and isinstance(time_range, list) and len(time_range) == 2:
-        # time_str = f"[{time_range[0]}, {time_range[1]}]" clean
-        time_str = json.dumps(time_range)
-#__________________________________________________________________________________check required tables exist____________________________________________
+# __________________________________________check required tables exist____________________________________________
     #If moving_features table not exists, then create it
     #geometry Projective geometry of the moving feature. ? spatial project of temporal geom but one mf can have multiple tem geom????
     cursor.execute("""
@@ -144,12 +117,11 @@ def insert_feature(self, feature, collection_id, connection, cursor):
             id TEXT PRIMARY KEY,
             collection_id TEXT REFERENCES collections(id) ON DELETE CASCADE,
             type TEXT DEFAULT 'Feature',
-            geometry geometry, 
             properties JSONB,
-            bbox JSONB,
-            time_range TSTZRANGE,
-            crs JSONB,
-            trs JSONB,
+            bbox STBOX,
+            time TSTZSPAN,
+            crs JSONB DEFAULT '{"type":"Name","properties":{"name":"urn:ogc:def:crs:OGC:1.3:CRS84"}}'::jsonb,
+            trs JSONB DEFAULT '{"type":"Name","properties":{"name":"urn:ogc:data:time:iso8601"}}'::jsonb,
             created_at TIMESTAMP DEFAULT NOW()
         )
     """)
@@ -169,7 +141,51 @@ def insert_feature(self, feature, collection_id, connection, cursor):
             created_at TIMESTAMP DEFAULT NOW()
         )
     """)
-    
+    cursor.execute("""
+            CREATE OR REPLACE FUNCTION update_mfeatures_on_tg()
+            RETURNS TRIGGER AS $$
+            DECLARE
+                target_feature_id TEXT;
+                target_collection_id TEXT;
+            BEGIN
+                IF TG_OP = 'DELETE' THEN
+                    target_feature_id := OLD.feature_id;
+                    target_collection_id := OLD.collection_id;
+                ELSE
+                    target_feature_id := NEW.feature_id;
+                    target_collection_id := NEW.collection_id;
+                END IF;
+
+                -- recompute bbox + time for the parent moving feature
+                UPDATE moving_features mf
+                SET
+                    bbox = (
+                        SELECT extent(tg.trajectory)
+                        FROM temporal_geometries tg
+                        WHERE tg.feature_id = target_feature_id
+                        AND tg.collection_id = target_collection_id
+                    ),
+
+                    time = (
+                        SELECT extent(tg.trajectory)::tstzspan
+                        FROM temporal_geometries tg
+                        WHERE tg.feature_id = target_feature_id
+                        AND tg.collection_id = target_collection_id
+                    )
+
+                WHERE mf.id = target_feature_id
+                AND mf.collection_id = target_collection_id;
+
+                RETURN COALESCE(NEW, OLD);
+
+            END;
+            $$ LANGUAGE plpgsql;
+            CREATE OR REPLACE TRIGGER trg_update_mfeatures_on_tg
+            AFTER INSERT OR UPDATE OR DELETE
+            ON temporal_geometries
+            FOR EACH ROW
+            EXECUTE FUNCTION update_mfeatures_on_tg();
+                    """)
     #If temporal_properties nad temporal_values tables not exists, then create
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS temporal_properties (
@@ -198,6 +214,7 @@ def insert_feature(self, feature, collection_id, connection, cursor):
     connection.commit()
 #___________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________
 
+
     srid = 4326 #world,
     if crs and isinstance(crs, dict):
         props = crs.get("properties", "")
@@ -207,50 +224,55 @@ def insert_feature(self, feature, collection_id, connection, cursor):
         if match:
             srid = int(match.group(1))
         else:
-            srid = 4326  # Default to WGS84 if no number found
+            srid = 4326  # Default to 4326
 
-
-   
     # INSERT INTO moving_features :temporal_geometries:Insert feature into moving_features table
-    cursor.execute("""
-        INSERT INTO moving_features 
-        (id, collection_id, type, geometry, properties, bbox, time_range, crs, trs)
-        VALUES (%s, %s, %s, trajectory(%s::tgeompoint), %s, %s, %s::tstzrange, %s, %s)
+
+
+    columns = ["id", "collection_id", "type", "properties"]
+    values = [feat_id, collection_id, "Feature", json.dumps(properties)]
+
+    if crs is not None:
+        columns.append("crs")
+        values.append(json.dumps(crs))
+
+    if trs is not None:
+        columns.append("trs")
+        values.append(json.dumps(trs))
+
+    query = sql.SQL("""
+        INSERT INTO moving_features ({fields})
+        VALUES ({placeholders})
         ON CONFLICT (id) DO NOTHING
         RETURNING id
-    """, (
-        feat_id,
-        collection_id,
-        "Feature",
-        tgeom_str,  
-        json.dumps(properties),
-        json.dumps(bbox) if bbox else None,
-        time_str,
-        json.dumps(crs) if crs else None,
-        json.dumps(trs) if trs else None
-    ))
+    """).format(
+        fields=sql.SQL(", ").join(map(sql.Identifier, columns)),
+        placeholders=sql.SQL(", ").join(sql.Placeholder() * len(values))
+    )
+    cursor.execute(query, values)
     inserted = cursor.fetchone()
-    
+
     # INSERT INTO temporal_geometries: If the create feature has a temporal_geom, then add to temporal_geometries table    
     #RE CHECK OGC (must the uiser always provide the temporal geom unsure 40 percent)
-    if inserted and tgeom_str and tgeomsql:
+    if inserted and tgeom_mfjson:
         geometry_type = "MovingPoint"  # Default 
         if temporal_geometry and isinstance(temporal_geometry, dict):
             geometry_type = temporal_geometry.get("type", "MovingPoint") #get geom_type of not default MovingPoint
             interpolation = temporal_geometry.get("interpolation", "Linear")
         else:
             interpolation = "Linear"
-        # RE CHECK OGC: i'm assuming i receive one trajectory per inserted feature, what if it's multiple temporal_geometries (trajs) ==>
         cursor.execute("""
             INSERT INTO temporal_geometries 
             (feature_id, collection_id,geometry_type,geometry,trajectory, interpolation)
-            VALUES (%s, %s,%s, trajectory(SETSRID(tgeompointFromText(%s),25832)),SETSRID(tgeompointFromText(%s),25832), %s)
+            VALUES (%s, %s,%s, trajectory(SETSRID(tgeompointFromMFJSON(%s),%s)),SETSRID(tgeompointFromMFJSON(%s),%s), %s)
         """, (
             feat_id,
             collection_id,
             geometry_type,
-            tgeom_str,
-            tgeom_str,
+            tgeom_mfjson,
+            srid,
+            tgeom_mfjson,
+            srid,
             interpolation
         ))
 

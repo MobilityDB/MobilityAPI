@@ -3,7 +3,11 @@ from datetime import datetime
 
 import re
 from datetime import datetime
-def build_feature_from_row(row, collection_id, include_temporal=True):
+def build_feature_from_row(row, collection_id, include_temporal=True, single=False):
+    cleaned = re.findall(r"[-+]?\d*\.\d+|\d+", str(row[4])) if not single else re.findall(r"[-+]?\d*\.\d+|\d+", str(row[3])) 
+
+    # convert to float
+    bbox= list(map(float, cleaned))
     geometry_json = row[2]
     if geometry_json and isinstance(geometry_json, str):
         try:
@@ -12,14 +16,22 @@ def build_feature_from_row(row, collection_id, include_temporal=True):
             geometry = None
     else:
         geometry = None
+
+        #Parse time_range if exists (col indx 5)
+    time = row[5] if not single else row[4]
+    if time:
+        if time and time.startswith('[') and time.endswith(']'):
+            times = time[1:-1].split(',')
+            time = [t.strip() for t in times]
     feature = {
         "type": "Feature",
         "id": str(row[0]),
         # "geometry": geometry,
-        "properties": row[3] or {},
-        "bbox": row[4],
-        "crs": row[6],
-        "trs": row[7],
+        "properties": row[3] if not single else row[2] or {},
+        "bbox": bbox[:4],
+        "time":time,
+        "crs": row[6] if not single else row[5] ,
+        "trs": row[7] if not single else row[6],
         "links": [
             {
                 "href": f"/collections/{collection_id}/items/{row[0]}",
@@ -39,17 +51,12 @@ def build_feature_from_row(row, collection_id, include_temporal=True):
         ]
     }
     
-    #Parse time_range if exists (col indx 5)
-    if row[5]:
-        time_str = row[5]
-        if time_str and time_str.startswith('[') and time_str.endswith(']'):
-            times = time_str[1:-1].split(',')
-            feature["time"] = [t.strip() for t in times]
+
     
     # Parse temporal geometries if included col 8 ***************Only for Retrieve single moving feature
-    if include_temporal and len(row) > 8 and row[8]:
+    if include_temporal and len(row) > 7 and row[7]:
         temporal_geometries = []
-        tg_list = row[8]
+        tg_list = row[7]
         for tg in tg_list:
             if tg.get('trajectory'):
                 # trajectory bjson to dict

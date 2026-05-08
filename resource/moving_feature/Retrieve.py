@@ -23,10 +23,9 @@ def get_movement_single_moving_feature(self, collection_id, feature_id, connecti
             SELECT 
                 mf.id,
                 mf.type,
-                mf.geometry,
                 mf.properties,
-                mf.bbox,
-                mf.time_range::text,
+                mf.bbox::text,
+                mf.time::text,
                 mf.crs,
                 mf.trs,
                 json_agg(
@@ -41,8 +40,8 @@ def get_movement_single_moving_feature(self, collection_id, feature_id, connecti
             FROM moving_features mf
             LEFT JOIN temporal_geometries tg ON mf.id = tg.feature_id
             WHERE mf.collection_id = %s AND mf.id = %s
-            GROUP BY mf.id, mf.type, mf.geometry, mf.properties, mf.bbox, 
-                     mf.time_range, mf.crs, mf.trs
+            GROUP BY mf.id, mf.type, mf.properties, mf.bbox, 
+                     mf.time, mf.crs, mf.trs
         """, (collection_id, feature_id))
         
         row = cursor.fetchone()
@@ -51,11 +50,11 @@ def get_movement_single_moving_feature(self, collection_id, feature_id, connecti
             self.handle_error(404, f"Feature '{feature_id}' not found in collection '{collection_id}'")
             return
         
-        feature = build_feature_from_row(row, collection_id, include_temporal=True)
+        feature = build_feature_from_row(row, collection_id, include_temporal=True, single=True)
         
         send_json_response(self, 200, json.dumps(feature))
 
     except Exception as e:
-        # print(f"Error retrieving feature: {e}")
-        # traceback.print_exc()
+        print(f"Error retrieving feature: {e}")
+        traceback.print_exc()
         self.handle_error(500, f"Internal server error: {str(e)}")

@@ -41,8 +41,11 @@ def delete_single_temporal_primitive_geo(self, collection_id, feature_id, geomet
         #----------------------------------------------------------------------------------------------------------------------
         # delete
         cursor.execute(
-            "DELETE FROM temporal_geometries WHERE id = %s",
-            (geometry_id,)
+            """DELETE FROM temporal_geometries tg 
+            WHERE tg.id = %s 
+              AND tg.feature_id = %s 
+              AND tg.collection_id = %s
+        """, (geometry_id, feature_id, collection_id)
         )
         
         connection.commit()
@@ -53,5 +56,5 @@ def delete_single_temporal_primitive_geo(self, collection_id, feature_id, geomet
         
     except Exception as e:
         connection.rollback()
-        # print(f"Error in delete_single_temporal_primitive_geo: {e}")
+        print(f"Error in delete_single_temporal_primitive_geo: {e}", flush=True)
         self.handle_error(500, f"Internal server error: {str(e)}")

@@ -94,12 +94,14 @@ def insert_feature(self, feature, collection_id, connection, cursor):
     # *convert temporalGeometry to TGeomPoint
     temporal_geometry = feature.get("temporalGeometry")
     tgeom_mfjson=None
-    if temporal_geometry:#either tempGeom os given as dict or json to str
-        if isinstance(temporal_geometry, dict):
+    if temporal_geometry:
+        if isinstance(temporal_geometry, dict): 
             tgeom_mfjson= json.dumps(temporal_geometry)
-        elif isinstance(temporal_geometry, str):
-            tgeom_mfjson = temporal_geometry
-        
+            
+        # elif isinstance(temporal_geometry, str):
+        #     print("eeee",flush=True)
+        #     tgeom_mfjson = temporal_geometry
+
         # time range
         # time_range_calculated = [stbox.tmin().isoformat(), stbox.tmax().isoformat()]
         
@@ -138,6 +140,7 @@ def insert_feature(self, feature, collection_id, connection, cursor):
             trajectory tgeompoint,
             interpolation TEXT,
             base JSONB,
+            orientations JSONB,
             created_at TIMESTAMP DEFAULT NOW()
         )
     """)
@@ -218,14 +221,18 @@ def insert_feature(self, feature, collection_id, connection, cursor):
     srid = 4326 #world,
     if crs and isinstance(crs, dict):
         props = crs.get("properties", "")
-        # Extract numbers from the CRS string (e.g., "urn:ogc:def:crs:EPSG::25832" -> 25832)
+
+        # CRS can be either:
+        # - "urn:ogc:def:crs:EPSG::25832"
+        # - {"name": "EPSG::25832"}
+        if isinstance(props, dict):
+            props = props.get("name", "")
+
         import re
         match = re.search(r'(\d+)', str(props))
+
         if match:
             srid = int(match.group(1))
-        else:
-            srid = 4326  # Default to 4326
-
     # INSERT INTO moving_features :temporal_geometries:Insert feature into moving_features table
 
 
@@ -254,28 +261,52 @@ def insert_feature(self, feature, collection_id, connection, cursor):
 
     # INSERT INTO temporal_geometries: If the create feature has a temporal_geom, then add to temporal_geometries table    
     #RE CHECK OGC (must the uiser always provide the temporal geom unsure 40 percent)
+    base = temporal_geometry.get("base",None)
     if inserted and tgeom_mfjson:
+
         geometry_type = "MovingPoint"  # Default 
         if temporal_geometry and isinstance(temporal_geometry, dict):
             geometry_type = temporal_geometry.get("type", "MovingPoint") #get geom_type of not default MovingPoint
             interpolation = temporal_geometry.get("interpolation", "Linear")
+           
+            orientations = temporal_geometry.get("orientations",None)
         else:
             interpolation = "Linear"
-        cursor.execute("""
-            INSERT INTO temporal_geometries 
-            (feature_id, collection_id,geometry_type,geometry,trajectory, interpolation)
-            VALUES (%s, %s,%s, trajectory(SETSRID(tgeompointFromMFJSON(%s),%s)),SETSRID(tgeompointFromMFJSON(%s),%s), %s)
-        """, (
-            feat_id,
-            collection_id,
-            geometry_type,
-            tgeom_mfjson,
-            srid,
-            tgeom_mfjson,
+        columns = ["feature_id","collection_id","geometry_type","geometry",
+            "trajectory",
+            "interpolation"
+        ]
+        values = [feat_id,collection_id,geometry_type,tgeom_mfjson,srid,tgeom_mfjson,
             srid,
             interpolation
-        ))
+        ]
+        placeholders = [
+            "%s", "%s", "%s",
+            "trajectory(SETSRID(tgeompointFromMFJSON(%s), %s))",
+            "SETSRID(tgeompointFromMFJSON(%s), %s)",
+            "%s"
+        ]
+        if base is not None:
+            columns.append("base")
+            placeholders.append("%s")
+            values.append(base)
 
+        if orientations is not None:
+            columns.append("orientations")
+            placeholders.append("%s")
+            values.append(orientations)
+
+
+        query = f"""
+                INSERT INTO temporal_geometries 
+                ({", ".join(columns)})
+                VALUES (
+                    {", ".join(placeholders)}
+                )
+                RETURNING ID
+            """
+        cursor.execute(query, values)
+        inserted = cursor.fetchone()
     if inserted:
         # print(f"Inserted feature {feat_id}")
         return feat_id

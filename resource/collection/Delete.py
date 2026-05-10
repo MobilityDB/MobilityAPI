@@ -5,6 +5,19 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 
 def delete_collection(self, collection_id, connection, cursor):
     try:
+        cursor.execute("""
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables
+                WHERE table_name = 'collections'
+            )
+        """)
+
+        table_exists = cursor.fetchone()[0]
+
+        if not table_exists:
+            self.handle_error(404, f"Collection '{collection_id}' not found")
+            return
+
         # check If exists 
         cursor.execute(
             "SELECT id FROM collections WHERE id = %s",

@@ -275,7 +275,7 @@ def test_create_single_feature(create_collections):
             "type": "name",
             "properties": "urn:ogc:def:crs:EPSG::25832"
         },
-        "temporalGeometry": feature_data["trajectory"],
+        "temporalGeometry": json.loads(feature_data["trajectory"]),
         "properties": {
             "name": f"Ship_{feature_data['mmsi']}",
             "type": "cargo"

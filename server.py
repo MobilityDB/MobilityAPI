@@ -147,7 +147,7 @@ class MyServer(BaseHTTPRequestHandler):
         # ==================================================== TGSEQUENCE ========================================================
 
         elif 'tgsequence' in self.path:
-            self.post_tgsequence()
+            self.post_tgsequence(connection, cursor)
         
         # ============= =============================COLLECTIONS =====================================================
 
@@ -312,7 +312,7 @@ class MyServer(BaseHTTPRequestHandler):
         mfeature_id = components[4]
         tGeometry_id = self.path.split('/')[6]
         self.delete_single_temporal_primitive_geo(
-            collection_id, mfeature_id, tGeometry_id)
+            collection_id, mfeature_id, tGeometry_id, connection, cursor)
     #=========*********************check urgt
     
 ## Resource Temporal Properties

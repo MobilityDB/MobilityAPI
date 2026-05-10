@@ -41,9 +41,9 @@ def get_tgsequence(self, connection, cursor):
                 interpolation,
                 base
             FROM temporal_geometries
-            WHERE feature_id = %s
+            WHERE feature_id = %s and collection_id = %s
             ORDER BY id
-        """, (feature_id,))
+        """, (feature_id,collection_id))
         
         rows = cursor.fetchall()
         

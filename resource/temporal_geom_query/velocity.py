@@ -31,8 +31,8 @@ def get_velocity(self, collection_id, feature_id, geometry_id, connection, curso
         #geometry exists for feature
         cursor.execute("""
             SELECT id FROM temporal_geometries 
-            WHERE id = %s AND feature_id = %s
-        """, (geometry_id, feature_id))
+            WHERE id = %s AND feature_id = %s AND collection_id = %s
+        """, (geometry_id, feature_id, collection_id))
         
         if cursor.fetchone() is None:
             self.handle_error(404, f"Temporal geometry '{geometry_id}' not found for feature '{feature_id}'")
@@ -44,20 +44,25 @@ def get_velocity(self, collection_id, feature_id, geometry_id, connection, curso
             getTimestamp(unnest(instants(speed(trajectory)))) as time,
             getValue(unnest(instants(speed(trajectory)))) as speed
             FROM temporal_geometries
-            WHERE id = %s AND feature_id = %s
-        """, (geometry_id, feature_id))
+            WHERE id = %s AND feature_id = %s AND collection_id = %s
+        """, (geometry_id, feature_id, collection_id))
         rows = cursor.fetchall()
                 
         if not rows:
             self.handle_error(404, f"No velocity data found for geometry '{geometry_id}'")
             return
         
-        values = []
-        for row in rows:
-            values.append({
-                "time": row[0].isoformat() if hasattr(row[0], 'isoformat') else str(row[0]),
-                "value": float(row[1])
-            })
+        values = {
+            "datetimes": [
+                t.isoformat() if hasattr(t, "isoformat") else str(t)
+                for t, d in rows
+            ],
+            "values": [
+                float(d)
+                for t, d in rows
+            ]
+        }
+            
         #response
         base_url = f"http://{self.server.server_name}:{self.server.server_port}"
         path = f"/collections/{collection_id}/items/{feature_id}/tgsequence/{geometry_id}/velocity"
@@ -74,6 +79,6 @@ def get_velocity(self, collection_id, feature_id, geometry_id, connection, curso
         
     except Exception as e:
         connection.rollback()
-        # print(f"Error in velocity query: {e}")
-        # traceback.print_exc()
+        print(f"Error in velocity query: {e}", flush=True)
+        traceback.print_exc()
         self.handle_error(500, f"Internal server error: {str(e)}")

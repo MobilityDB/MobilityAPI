@@ -27,9 +27,9 @@ def log_request_response(action: str, response: requests.Response):
     #response status code
     print(f"<== Status: {response.status_code}")
     try:
-        print("Response JSON:", json.dumps(response.json(), indent=2)[:500])
+        print("Response JSON:", json.dumps(response.json(), indent=2)[:600])
     except Exception:
-        print("Response Text:", response.text[:500])
+        print("Response Text:", response.text[:510])
     print("=" * 60 + "\n")
 
 
@@ -654,88 +654,114 @@ def test_get_tgsequence(create_collections):
 #======================================Test GET /collections/{id}/items/{fid}/tgsequence/{gid}/distance====================================
 def test_distance_query(setup_query_test_data):
     data = setup_query_test_data
+
     resp = requests.get(
         f"{HOST}/collections/{data['collection_id']}/items/{data['feature_id']}/tgsequence/{data['geometry_id']}/distance"
     )
+
     log_request_response("Distance query", resp)
-    
+
     assert resp.status_code == 200
 
     result = resp.json()
+
     assert result["type"] == "TReal"
+
     assert "values" in result
-    assert isinstance(result["values"], list)
-    assert len(result["values"]) > 1
-    
-    # assert first value has time and value
-    first_point = result["values"][0]
-    assert "time" in first_point
-    assert "value" in first_point
-    assert isinstance(first_point["value"], (int, float))
-    
-    # assert values are increasing (cumulative distance)
-    for i in range(1, len(result["values"])):
-        assert result["values"][i]["value"] > result["values"][i-1]["value"]
-    
-    assert result["unit"] == "meters" #check ogc m , meters , M ??? not urgent clean
-    assert result["queryType"] == "distance"
+    assert isinstance(result["values"], dict)
+
+    first_point = result["values"]
+
+    assert "datetimes" in first_point
+    assert "values" in first_point
+
+    assert isinstance(first_point["datetimes"], list)
+    assert isinstance(first_point["values"], list)
+
+    assert len(first_point["values"]) > 1
+
+    assert isinstance(first_point["values"][0], (int, float))
+
+    vals = first_point["values"]
+
+    for i in range(1, len(vals)):
+        assert vals[i] > vals[i - 1]
+
+    assert result["form"] == "meters"
+    assert result["name"] == "distance"
     assert "links" in result
-    assert "timeStamp" in result
 
 #==================================================Test GET /collections/{id}/items/{fid}/tgsequence/{gid}/velocity===================================================================
 def test_velocity_query(setup_query_test_data):
     data = setup_query_test_data
+
     resp = requests.get(
         f"{HOST}/collections/{data['collection_id']}/items/{data['feature_id']}/tgsequence/{data['geometry_id']}/velocity"
     )
+
     log_request_response("Velocity query", resp)
-    
+
     assert resp.status_code == 200
 
     result = resp.json()
+
     assert result["type"] == "TReal"
+
     assert "values" in result
-    assert isinstance(result["values"], list)
-    assert len(result["values"]) > 1
-    
-    # assert first value has time and value
-    first_point = result["values"][0]
-    assert "time" in first_point
-    assert "value" in first_point
-    assert isinstance(first_point["value"], (int, float))
-    
-    assert result["unit"] == "m/s"
-    assert result["queryType"] == "velocity"
+    assert isinstance(result["values"], dict)
+
+    first_point = result["values"]
+
+    assert "datetimes" in first_point
+    assert "values" in first_point
+
+    assert isinstance(first_point["datetimes"], list)
+    assert isinstance(first_point["values"], list)
+
+    assert len(first_point["values"]) > 1
+
+    assert isinstance(first_point["values"][0], (int, float))
+
+    assert result["form"] == "m/s"
+    assert result["name"] == "velocity"
+
     assert "links" in result
-    assert "timeStamp" in result
 
 #===========================================Test GET /collections/{id}/items/{fid}/tgsequence/{gid}/acceleration======================================
 def test_acceleration_query(setup_query_test_data):
     data = setup_query_test_data
+
     resp = requests.get(
         f"{HOST}/collections/{data['collection_id']}/items/{data['feature_id']}/tgsequence/{data['geometry_id']}/acceleration"
     )
+
     log_request_response("Acceleration query", resp)
-    
+
     assert resp.status_code == 200
 
     result = resp.json()
-    assert result["type"] == "TReal"
-    assert "values" in result
-    assert isinstance(result["values"], list)
-    assert len(result["values"]) >= 1 
-    
-    # assert first value has time and value
-    first_point = result["values"][0]
-    assert "time" in first_point
-    assert "value" in first_point
-    assert isinstance(first_point["value"], (int, float))
-    
-    assert result["unit"] == "m/s²"
-    assert result["queryType"] == "acceleration"
-    assert "links" in result
-    assert "timeStamp" in result
 
+    assert result["type"] == "TReal"
+
+    assert "values" in result
+    assert isinstance(result["values"], dict)
+
+    first_point = result["values"]
+
+    assert "datetimes" in first_point
+    assert "values" in first_point
+
+    assert isinstance(first_point["datetimes"], list)
+    assert isinstance(first_point["values"], list)
+
+    assert len(first_point["values"]) >= 1
+
+    assert isinstance(first_point["values"][0], (int, float))
+
+    assert result["form"] == "m/s²"
+    assert result["name"] == "acceleration"
+
+    assert "links" in result
 #======================================================Test query WITH non-existent TEMP geom id======================================
 def test_query_with_invalid_geometry_id(setup_query_test_data):
     

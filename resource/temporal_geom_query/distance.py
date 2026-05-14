@@ -31,8 +31,8 @@ def get_distance(self, collection_id, feature_id, geometry_id, connection, curso
         #geometry exists for feature
         cursor.execute("""
             SELECT id FROM temporal_geometries 
-            WHERE id = %s AND feature_id = %s
-        """, (geometry_id, feature_id))
+            WHERE id = %s AND feature_id = %s and collection_id = %s
+        """, (geometry_id, feature_id, collection_id))
         
         if cursor.fetchone() is None:
             self.handle_error(404, f"Temporal geometry '{geometry_id}' not found for feature '{feature_id}'")
@@ -45,21 +45,25 @@ def get_distance(self, collection_id, feature_id, geometry_id, connection, curso
             getTimestamp(unnest(instants(round(cumulativeLength(trajectory),6)))) as time,
             getValue(unnest(instants(round(cumulativeLength(trajectory),6)))) as distance
             FROM temporal_geometries
-            WHERE id = %s AND feature_id = %s
-        """, (geometry_id, feature_id))
+            WHERE id = %s AND feature_id = %s AND collection_id = %s
+        """, (geometry_id, feature_id, collection_id))
         #eg t[0@08:00, 14.1@08:01, 27.1@08:02, 42.4@08:03] clean ?
         rows = cursor.fetchall()
         if not rows:
             self.handle_error(404, f"Temporal geometry '{geometry_id}' not found for feature '{feature_id}'")
             return
-        values = []
-        for row in rows:
-            values.append({
-                "time": row[0].isoformat() if hasattr(row[0], 'isoformat') else str(row[0]),
-                "value": float(row[1])
-            })
         
-        #response
+        values = {
+            "datetimes": [
+                t.isoformat() if hasattr(t, "isoformat") else str(t)
+                for t, d in rows
+            ],
+            "values": [
+                float(d)
+                for t, d in rows
+            ]
+        }
+                #response
         base_url = f"http://{self.server.server_name}:{self.server.server_port}"
         path = f"/collections/{collection_id}/items/{feature_id}/tgsequence/{geometry_id}/distance"
         

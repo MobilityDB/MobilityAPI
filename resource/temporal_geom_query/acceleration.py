@@ -31,8 +31,8 @@ def get_acceleration(self, collection_id, feature_id, geometry_id, connection, c
         #temp geom exists for feature 
         cursor.execute("""
             SELECT id FROM temporal_geometries 
-            WHERE id = %s AND feature_id = %s
-        """, (geometry_id, feature_id))
+            WHERE id = %s AND feature_id = %s and collection_id = %s
+        """, (geometry_id, feature_id, collection_id))
         
         if cursor.fetchone() is None:
             self.handle_error(404, f"Temporal geometry '{geometry_id}' not found for feature '{feature_id}'")
@@ -43,8 +43,8 @@ def get_acceleration(self, collection_id, feature_id, geometry_id, connection, c
             getTimestamp(unnest(instants(speed(trajectory)))) as time,
             getValue(unnest(instants(speed(trajectory)))) as speed
             FROM temporal_geometries
-            WHERE id = %s AND feature_id = %s
-        """, (geometry_id, feature_id))
+            WHERE id = %s AND feature_id = %s and collection_id = %s
+        """, (geometry_id, feature_id, collection_id))
         rows = cursor.fetchall()
                 
 #remark: speed returns stepwise interpolation, derivative requires LInear, toLinear() doesn't accept tfloat type , for now python compute the derivative clean check
@@ -55,21 +55,33 @@ def get_acceleration(self, collection_id, feature_id, geometry_id, connection, c
             return
 
         #ACCELERATION between each pair of points (tfloats) 
-        values = []
+        datetimes = []
+        acceleration_values = []
         for i in range(len(rows) - 1):
             t1, s1 = rows[i]
             t2, s2 = rows[i + 1]
-            # time diff seconds
             dt = (t2 - t1).total_seconds()
             if dt > 0:
-                # change in speed / time
                 accel = (s2 - s1) / dt
-                values.append({
-                    "time": t2.isoformat() if hasattr(t2, 'isoformat') else str(t2),
-                    "value": float(accel)
-                })
-        #acc first point to 0
-        values.insert(0, {"time": rows[0][0].isoformat(), "value": 0.0})
+                datetimes.append(
+                    t2.isoformat() if hasattr(t2, "isoformat") else str(t2)
+                )
+                acceleration_values.append(float(accel))
+
+        # optional first point = 0
+        datetimes.insert(
+            0,
+            rows[0][0].isoformat() if hasattr(rows[0][0], "isoformat") else str(rows[0][0])
+        )
+
+        acceleration_values.insert(0, 0.0)
+
+        values = {
+            "datetimes": datetimes,
+            "values": acceleration_values
+        }
+                #acc first point to 0
+
         if not values:
             self.handle_error(404, f"No acceleration data found")
             return

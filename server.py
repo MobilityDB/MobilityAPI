@@ -86,18 +86,28 @@ class MyServer(BaseHTTPRequestHandler):
             featureId = parts[4]
             propertyName = parts[6]
             self.get_temporal_property(collectionId, featureId, propertyName, connection, cursor)
+            return
         
+
+
+
         # /collections/{collectionId}/items/{mFeatureId}/tproperties
-        elif self.path.endswith("/tproperties"):
-            parts = self.path.split('/')
+        path_without_query = urlparse(self.path).path
+        if path_without_query.endswith("/tproperties"):
+            parts = path_without_query.split('/')
             collectionId = parts[2]
             featureId = parts[4]
             self.get_tproperties(collectionId, featureId, connection, cursor)
+            return
+
         
         # ==================================================== TGSEQUENCE ========================================================
         # /collections/{collectionId}/items/{mFeatureId}/tgsequence
         elif 'tgsequence' in self.path:
             self.get_tgsequence(connection, cursor)
+            return
+            
+            
         
         # ==================================================== MOVING FEATURES ==================================================
         # /collections/{collectionId}/items/{mFeatureId}
@@ -106,26 +116,31 @@ class MyServer(BaseHTTPRequestHandler):
             collectionId = parts[2]
             mFeature_id = parts[4]
             self.get_movement_single_moving_feature(collectionId, mFeature_id, connection, cursor)
+            return
         
         # /collections/{collectionId}/items
         elif '/items' in self.path and self.path.startswith('/collections/'):
             collection_id = self.path.split('/')[2]
             self.get_collection_items(collection_id, connection, cursor)
+            return
         
         # ============= =============================COLLECTIONS =====================================================
         # /collections
         elif self.path == '/collections':
             self.get_collections(connection, cursor)
+            return
         
         # /collections/{collectionId}
         elif self.path.startswith('/collections/'):
             path_only = urlparse(self.path).path
             collection_id = path_only.split('/')[-1]
             self.get_collection_id(collection_id, connection, cursor)
+            return
 
         # / (home)
         elif self.path == '/':
             self.do_home()
+            return
     
     def do_POST(self):
         # ==================================================== TEMPORAL PROPERTIES ========================================================

@@ -201,12 +201,12 @@ def insert_feature(self, feature, collection_id, connection, cursor):
             created_at TIMESTAMP DEFAULT NOW()
         )
     """)
-    
+    #not temporal type because i can't fix the column to treal timage etc since we can have diff types of properties
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS temporal_values (
             id SERIAL PRIMARY KEY,
             property_id INTEGER REFERENCES temporal_properties(id) ON DELETE CASCADE,
-            datetimes TIMESTAMP[] NOT NULL,
+            datetimes TIMESTAMPTZ[] NOT NULL,
             values JSONB NOT NULL,
             interpolation TEXT DEFAULT 'Linear',
             created_at TIMESTAMP DEFAULT NOW()

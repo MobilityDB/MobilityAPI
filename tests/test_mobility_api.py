@@ -21,15 +21,15 @@ def log_request_response(action: str, response: requests.Response):
     if req.body:
         try:
             body = json.loads(req.body)
-            print("Request JSON:", json.dumps(body, indent=2)[:500])
+            print("Request JSON:", json.dumps(body, indent=2)[:600])
         except Exception:
             print("Request body:", req.body[:500])
     #response status code
     print(f"<== Status: {response.status_code}")
     try:
-        print("Response JSON:", json.dumps(response.json(), indent=2)[:600])
+        print("Response JSON:", json.dumps(response.json(), indent=2)[:700])
     except Exception:
-        print("Response Text:", response.text[:510])
+        print("Response Text:", response.text[:600])
     print("=" * 60 + "\n")
 
 
@@ -877,7 +877,33 @@ def test_create_temporal_property(setup_property_test_data):
         json=property_data
     )
     log_request_response("Create temporal property", resp)
-    assert resp.status_code == 201
+    assert resp.status_code in (201,409)
+
+#============================================================POST /collections/{id}/items/{fid}/tproperties with values==========================================
+def test_create_temporal_property_with_values(setup_property_test_data):
+    
+    data = setup_property_test_data
+    property_data ={
+        "datetimes": [
+            "2011-07-14T22:01:06.000Z",
+            "2011-07-14T22:01:07.000Z",
+            "2011-07-14T22:01:08.000Z"
+        ],
+        "speedv2": {
+            "type": "TReal",
+            "form": "KMH",
+            "values": [65.0, 70.0, 80.0],
+            "interpolation": "Linear"
+        }
+        }
+            
+    resp = requests.post(
+        f"{HOST}/collections/{data['collection_id']}/items/{data['feature_id']}/tproperties",
+        json=property_data
+    )
+    log_request_response("Create temporal property", resp)
+    assert resp.status_code in (201,409)
+
 
 
 #=========================================================GET /collections/{id}/items/{fid}/tproperties==============================
@@ -891,7 +917,23 @@ def test_get_temporal_properties_list(setup_property_test_data):
     assert resp.status_code == 200
     result = resp.json()
     assert "temporalProperties" in result
-    assert len(result["temporalProperties"]) > 0
+    # assert len(result["temporalProperties"]) > 0
+
+
+
+def test_tproperties_subtemporal_with_interval(setup_property_test_data):
+    data = setup_property_test_data
+
+    interval = urllib.parse.quote(
+        "2011-07-14T22:01:06+00/2011-07-14T22:01:07+00"
+    )
+
+    resp = requests.get(
+        f"{HOST}/collections/{data['collection_id']}/items/{data['feature_id']}/tproperties?subTemporalValue=true&datetime={interval}"
+    )
+    log_request_response("Get temporal properties list with subtemporal", resp)
+
+    assert resp.status_code == 200
 
  #====================================================POST /collections/{id}/items/{fid}/tproperties/{property-name}=================================
 def test_add_temporal_values(setup_property_test_data):

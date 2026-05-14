@@ -63,7 +63,7 @@ def post_temporal_property(self, collection_id, feature_id, property_name, conne
         cursor.execute("""
             INSERT INTO temporal_values 
             (property_id, datetimes, values, interpolation)
-            VALUES (%s, %s::timestamp[], %s, %s)
+            VALUES (%s, %s::timestamptz[], %s, %s)
             RETURNING id
         """, (
             property_id,
@@ -88,6 +88,6 @@ def post_temporal_property(self, collection_id, feature_id, property_name, conne
         self.handle_error(400, "Invalid JSON")
     except Exception as e:
         connection.rollback()
-        # print(f"Error in post_temporal_property: {e}")
-        # traceback.print_exc()
+        print(f"Error in post_temporal_property: {e}")
+        traceback.print_exc()
         self.handle_error(500, f"Internal server error: {str(e)}")

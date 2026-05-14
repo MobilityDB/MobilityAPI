@@ -49,8 +49,8 @@ def parse_request_body(self):
 #create property -mandatory fields ogc  
 def validate_property_data(data):
     errors = []
-    if "name" not in data:
-        errors.append("Missing required field: name")
+    if "name" not in data and "detetimes" not in data:
+        errors.append("JSON request body not compliant")
     if "type" not in data:
         errors.append("Missing required field: type")
     return errors

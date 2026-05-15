@@ -79,21 +79,19 @@ class MyServer(BaseHTTPRequestHandler):
                 return
         
         # ==================================================== TEMPORAL PROPERTIES ========================================================
+        path_without_query = urlparse(self.path).path
         # /collections/{collectionId}/items/{mFeatureId}/tproperties/{tPropertyName} eg speed
-        elif "/tproperties/" in self.path:
-            parts = self.path.split('/')
+        if "/tproperties/" in path_without_query:
+            parts = path_without_query.split('/')
             collectionId = parts[2]
             featureId = parts[4]
             propertyName = parts[6]
             self.get_temporal_property(collectionId, featureId, propertyName, connection, cursor)
             return
         
-
-
-
         # /collections/{collectionId}/items/{mFeatureId}/tproperties
-        path_without_query = urlparse(self.path).path
-        if path_without_query.endswith("/tproperties"):
+        
+        elif path_without_query.endswith("/tproperties"):
             parts = path_without_query.split('/')
             collectionId = parts[2]
             featureId = parts[4]

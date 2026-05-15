@@ -27,7 +27,7 @@ def log_request_response(action: str, response: requests.Response):
     #response status code
     print(f"<== Status: {response.status_code}")
     try:
-        print("Response JSON:", json.dumps(response.json(), indent=2)[:700])
+        print("Response JSON:", json.dumps(response.json(), indent=2)[:900])
     except Exception:
         print("Response Text:", response.text[:600])
     print("=" * 60 + "\n")
@@ -905,7 +905,6 @@ def test_create_temporal_property_with_values(setup_property_test_data):
     assert resp.status_code in (201,409)
 
 
-
 #=========================================================GET /collections/{id}/items/{fid}/tproperties==============================
 def test_get_temporal_properties_list(setup_property_test_data):
    
@@ -919,9 +918,21 @@ def test_get_temporal_properties_list(setup_property_test_data):
     assert "temporalProperties" in result
     # assert len(result["temporalProperties"]) > 0
 
+def test_tproperties_subtemporal_with_datetime(setup_property_test_data):
+    data = setup_property_test_data
 
+    interval = urllib.parse.quote(
+        "2011-07-14T22:01:06+00/2011-07-14T22:01:07+00"
+    )
 
-def test_tproperties_subtemporal_with_interval(setup_property_test_data):
+    resp = requests.get(
+        f"{HOST}/collections/{data['collection_id']}/items/{data['feature_id']}/tproperties?datetime={interval}"
+    )
+    log_request_response("Get temporal properties list with subtemporal", resp)
+
+    assert resp.status_code == 200
+
+def test_tproperties_subtemporal_with_subtemporal(setup_property_test_data):
     data = setup_property_test_data
 
     interval = urllib.parse.quote(
@@ -937,14 +948,16 @@ def test_tproperties_subtemporal_with_interval(setup_property_test_data):
 
  #====================================================POST /collections/{id}/items/{fid}/tproperties/{property-name}=================================
 def test_add_temporal_values(setup_property_test_data):
-   
     data = setup_property_test_data
     values_data = {
-        "datetimes": ["2024-03-01T00:00:00Z", "2024-03-01T01:00:00Z"],
-        "values": [15.5, 16.2],
+        "datetimes": [
+            "2024-03-01T00:00:00Z",
+            "2024-03-01T00:30:00Z",   
+            "2024-03-01T01:00:00Z"
+        ],
+        "values": [15.5, 15.8, 16.2],
         "interpolation": "Linear"
     }
-    
     resp = requests.post(
         f"{HOST}/collections/{data['collection_id']}/items/{data['feature_id']}/tproperties/speed",
         json=values_data
@@ -952,9 +965,9 @@ def test_add_temporal_values(setup_property_test_data):
     log_request_response("Add temporal values", resp)
     assert resp.status_code == 201
 
+from datetime import datetime
 #==========================================================GET /collections/{id}/items/{fid}/tproperties/{name}=======================
 def test_get_temporal_property(setup_property_test_data):
-   
     data = setup_property_test_data
     resp = requests.get(
         f"{HOST}/collections/{data['collection_id']}/items/{data['feature_id']}/tproperties/speed"
@@ -962,11 +975,49 @@ def test_get_temporal_property(setup_property_test_data):
     log_request_response("Get temporal property", resp)
     assert resp.status_code == 200
     result = resp.json()
-    assert result["name"] == "speed"
-    assert result["type"] == "TReal"
-    assert "values" in result #check ogc 
-    assert len(result["values"]) > 0
+    assert "temporalProperties" in result
+    assert len(result["temporalProperties"]) > 0
+    assert "values" in result["temporalProperties"][0]
 
+def test_get_temporal_property_with_datetime(setup_property_test_data):
+    data = setup_property_test_data
+    interval = urllib.parse.quote("2024-03-01T00:00:00Z/2024-03-01T00:30:00Z")
+    resp = requests.get(
+        f"{HOST}/collections/{data['collection_id']}/items/{data['feature_id']}/tproperties/speed?datetime={interval}"
+    )
+    log_request_response("Get temporal property with datetime filter", resp)
+    assert resp.status_code == 200
+    result = resp.json()
+    assert "temporalProperties" in result
+    assert len(result["temporalProperties"]) > 0
+    start = datetime.fromisoformat("2024-03-01T00:00:00Z")
+    end = datetime.fromisoformat("2024-03-01T00:30:00Z")
+    found = False
+    for segment in result["temporalProperties"]:
+        for dt_str in segment["datetimes"]:
+            dt = datetime.fromisoformat(dt_str.replace('Z', '+00:00'))
+            if start <= dt <= end:
+                found = True
+                break
+        if found:
+            break
+    assert found, "No segment intersects the requested interval"
+
+def test_get_temporal_property_with_subtemporal(setup_property_test_data):
+    data = setup_property_test_data
+    interval = urllib.parse.quote("2024-03-01T00:15:00Z/2024-03-01T00:45:00Z")
+    resp = requests.get(
+        f"{HOST}/collections/{data['collection_id']}/items/{data['feature_id']}/tproperties/speed?subTemporalValue=true&datetime={interval}"
+    )
+    log_request_response("Get temporal property with subTemporalValue", resp)
+    assert resp.status_code == 200
+    result = resp.json()
+    assert "temporalProperties" in result
+    assert len(result["temporalProperties"]) > 0
+    for segment in result["temporalProperties"]:
+        for dt_str in segment["datetimes"]:
+            dt = datetime.fromisoformat(dt_str.replace('Z', '+00:00'))
+            assert "2024-03-01T00:15:00Z" <= dt.isoformat() <= "2024-03-01T00:45:00Z"
 #============================================================DELETE /collections/{id}/items/{fid}/tproperties/{name}===========================
 def test_delete_temporal_property(setup_property_test_data):
     

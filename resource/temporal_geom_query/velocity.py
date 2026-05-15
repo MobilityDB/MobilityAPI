@@ -79,6 +79,6 @@ def get_velocity(self, collection_id, feature_id, geometry_id, connection, curso
         
     except Exception as e:
         connection.rollback()
-        print(f"Error in velocity query: {e}", flush=True)
-        traceback.print_exc()
+        # print(f"Error in velocity query: {e}", flush=True)
+        # traceback.print_exc()
         self.handle_error(500, f"Internal server error: {str(e)}")

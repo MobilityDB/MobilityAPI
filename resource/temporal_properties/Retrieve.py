@@ -96,14 +96,23 @@ def get_tproperties(self, collection_id, feature_id, connection, cursor):
                 }
             properties = [temporal_properties_obj] if rows else []
         else:
+
             query = """
-                SELECT property_name, property_type, form, description
-                FROM temporal_properties
-                WHERE feature_id = %s
-                ORDER BY property_name
-                LIMIT %s
+                SELECT DISTINCT tp.property_name, tp.property_type, tp.form, tp.description
+                FROM temporal_properties tp
+                LEFT JOIN temporal_values tv ON tp.id = tv.property_id
+                WHERE tp.feature_id = %s
             """
-            cursor.execute(query, (feature_id, limit))
+            params = [feature_id]
+            if dt1 and dt2:
+                query += """ AND EXISTS (
+                    SELECT 1 FROM unnest(tv.datetimes) AS d(t)
+                    WHERE d.t >= %s AND d.t <= %s
+                )"""
+                params += [dt1, dt2]
+            query += " ORDER BY tp.property_name LIMIT %s"
+            params.append(limit)
+            cursor.execute(query, params)
             rows = cursor.fetchall()
             for row in rows:
                 properties.append({

@@ -28,13 +28,15 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/parquet-go/parquet-go"
 )
 
 var (
 	pool         *pgxpool.Pool
 	defaultLimit = envInt("MFAPI_DEFAULT_LIMIT", 100)
 	maxLimit     = envInt("MFAPI_MAX_LIMIT", 10000)
-	exportBatch  = envInt("MFAPI_EXPORT_LIMIT", 0) // 0 = unbounded stream
+	exportBatch  = envInt("MFAPI_EXPORT_LIMIT", 0)          // 0 = unbounded stream
+	parquetRG    = envInt("MFAPI_PARQUET_ROWGROUP", 1024)   // rows per Parquet row group (bounds export memory)
 )
 
 // OGC <-> MobilityDB conventions (assessed against live MobilityDB):
@@ -86,7 +88,7 @@ func main() {
 	mux.HandleFunc("GET /collections/{cid}/items", streamItems)
 	mux.HandleFunc("GET /collections/{cid}/items/{fid}", getItem)
 	mux.HandleFunc("POST /collections/{cid}/items", postItem)
-	mux.HandleFunc("GET /collections/{cid}/export", exportNDJSON) // lakehouse bulk feed
+	mux.HandleFunc("GET /collections/{cid}/export", export) // lakehouse bulk feed (NDJSON | Parquet)
 
 	addr := ":" + strconv.Itoa(envInt("MFAPI_PORT", 8088))
 	srv := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second}
@@ -311,10 +313,12 @@ func getItem(w http.ResponseWriter, r *http.Request) {
 	writeRaw(w, 200, ogcify(body))
 }
 
-// exportNDJSON streams one Feature per line (application/x-ndjson) from a
-// cursor — the lakehouse bulk feed: DuckDB read_json_auto / Spark / pandas
-// ingest it directly, and it converts to Parquet/Arrow in the lake.
-func exportNDJSON(w http.ResponseWriter, r *http.Request) {
+// export is the bulk lakehouse feed, streamed from a server-side cursor so
+// memory is bounded for any size. Default is NDJSON (one Feature per line —
+// DuckDB read_json_auto / Spark / pandas ingest it directly); ?format=parquet
+// emits the columnar WKB + bbox/time sidecar form the lake can prune by space
+// and time, and convert into the columnar temporal layout (MEOS-ARROW).
+func export(w http.ResponseWriter, r *http.Request) {
 	tbl, srid, ok := collectionMeta(r.Context(), r.PathValue("cid"))
 	if !ok {
 		httpErr(w, 404, "collection not found")
@@ -329,6 +333,10 @@ func exportNDJSON(w http.ResponseWriter, r *http.Request) {
 	if exportBatch > 0 {
 		args = append(args, exportBatch)
 		tail = " LIMIT $" + itoa(len(args))
+	}
+	if r.URL.Query().Get("format") == "parquet" {
+		streamParquet(w, r, tbl, tgExpr, where, tail, args)
+		return
 	}
 	sql := "SELECT jsonb_build_object('type','Feature','id',id::text," +
 		"'properties',jsonb_build_object('mmsi',mmsi,'name',name)," +
@@ -355,6 +363,66 @@ func exportNDJSON(w http.ResponseWriter, r *http.Request) {
 			bw.Flush()
 		}
 	}
+}
+
+// pqRow is the lakehouse Parquet schema: the trajectory WKB plus a bbox/time
+// sidecar (xmin..tmax) so the lake prunes row groups by space and time.
+type pqRow struct {
+	ID   int64   `parquet:"id"`
+	MMSI int64   `parquet:"mmsi"`
+	Name string  `parquet:"name"`
+	WKB  []byte  `parquet:"trajectory_wkb"`
+	Xmin float64 `parquet:"xmin"`
+	Ymin float64 `parquet:"ymin"`
+	Xmax float64 `parquet:"xmax"`
+	Ymax float64 `parquet:"ymax"`
+	Tmin string  `parquet:"tmin"`
+	Tmax string  `parquet:"tmax"`
+}
+
+// streamParquet writes Parquet from a server-side cursor, flushing a row group
+// every few thousand rows so memory stays bounded and each row group carries
+// its own min/max statistics for predicate pushdown. The trajectory geometry
+// materialises once per row (g) so the sidecar accessors do not re-clip.
+func streamParquet(w http.ResponseWriter, r *http.Request, tbl, tgExpr, where, tail string, args []any) {
+	sql := "SELECT id, mmsi, name, asBinary(g)," +
+		" Xmin(stbox(g)), Ymin(stbox(g)), Xmax(stbox(g)), Ymax(stbox(g))," +
+		" Tmin(stbox(g))::text, Tmax(stbox(g))::text FROM (" +
+		"SELECT id, coalesce(mmsi,0) AS mmsi, coalesce(name,'') AS name, " + tgExpr + " AS g" +
+		" FROM " + ident(tbl) + " " + where + " ORDER BY id" + tail + ") s"
+	rows, err := pool.Query(r.Context(), sql, args...)
+	if err != nil {
+		httpErr(w, 500, err.Error())
+		return
+	}
+	defer rows.Close()
+	w.Header().Set("Content-Type", "application/vnd.apache.parquet")
+	w.Header().Set("Content-Disposition", `attachment; filename="`+tbl+`.parquet"`)
+	pw := parquet.NewGenericWriter[pqRow](w)
+	defer pw.Close()
+	batch := make([]pqRow, 0, parquetRG)
+	emit := func() bool { // one row group per batch: memory bounded by parquetRG, each group carries its own stats
+		if len(batch) == 0 {
+			return true
+		}
+		if _, e := pw.Write(batch); e != nil {
+			return false
+		}
+		pw.Flush()
+		batch = batch[:0]
+		return true
+	}
+	for rows.Next() {
+		var x pqRow
+		if err := rows.Scan(&x.ID, &x.MMSI, &x.Name, &x.WKB, &x.Xmin, &x.Ymin, &x.Xmax, &x.Ymax, &x.Tmin, &x.Tmax); err != nil {
+			break
+		}
+		batch = append(batch, x)
+		if len(batch) == parquetRG && !emit() {
+			break
+		}
+	}
+	emit()
 }
 
 func postItem(w http.ResponseWriter, r *http.Request) {

@@ -1,12 +1,13 @@
 // MobilityAPI-go — a thin, compiled OGC API – Moving Features tier over
 // MobilityDB, built for very large databases and the lakehouse direction:
-//   * streaming responses (the FeatureCollection is written row-by-row from a
+//   - streaming responses (the FeatureCollection is written row-by-row from a
 //     server-side cursor, so memory is bounded regardless of result size);
-//   * keyset pagination (WHERE id > :after) with OGC next links — no OFFSET;
-//   * index-using spatial/temporal filters (bbox, datetime) pushed to the
+//   - keyset pagination (WHERE id > :after) with OGC next links — no OFFSET;
+//   - index-using spatial/temporal filters (bbox, datetime) pushed to the
 //     MobilityDB GiST index via the && operator;
-//   * a streaming NDJSON bulk-export endpoint the lake (DuckDB / MobilityDuck /
+//   - a streaming NDJSON bulk-export endpoint the lake (DuckDB / MobilityDuck /
 //     Spark) can ingest directly.
+//
 // All temporal work and (de)serialization run in MobilityDB (asMFJSON,
 // atTime, tgeompointFromMFJSON); the tier holds no MEOS (no cgo, no PyMEOS).
 package main
@@ -27,6 +28,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/parquet-go/parquet-go"
 )
@@ -35,8 +37,8 @@ var (
 	pool         *pgxpool.Pool
 	defaultLimit = envInt("MFAPI_DEFAULT_LIMIT", 100)
 	maxLimit     = envInt("MFAPI_MAX_LIMIT", 10000)
-	exportBatch  = envInt("MFAPI_EXPORT_LIMIT", 0)          // 0 = unbounded stream
-	parquetRG    = envInt("MFAPI_PARQUET_ROWGROUP", 1024)   // rows per Parquet row group (bounds export memory)
+	exportBatch  = envInt("MFAPI_EXPORT_LIMIT", 0)        // 0 = unbounded stream
+	parquetRG    = envInt("MFAPI_PARQUET_ROWGROUP", 1024) // rows per Parquet row group (bounds export memory)
 )
 
 // OGC <-> MobilityDB conventions (assessed against live MobilityDB):
@@ -82,6 +84,7 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) { writeRaw(w, 200, `{"status":"ok"}`) })
 	mux.HandleFunc("GET /", landing)
+	mux.HandleFunc("GET /api", apiDoc)
 	mux.HandleFunc("GET /conformance", conformance)
 	mux.HandleFunc("GET /collections", listCollections)
 	mux.HandleFunc("GET /collections/{cid}", getCollection)
@@ -89,6 +92,11 @@ func main() {
 	mux.HandleFunc("GET /collections/{cid}/items/{fid}", getItem)
 	mux.HandleFunc("POST /collections/{cid}/items", postItem)
 	mux.HandleFunc("GET /collections/{cid}/export", export) // lakehouse bulk feed (NDJSON | Parquet)
+	// OGC API – Moving Features sub-resources of a moving feature:
+	mux.HandleFunc("GET /collections/{cid}/items/{fid}/tgsequence", tgSequence)
+	mux.HandleFunc("GET /collections/{cid}/items/{fid}/tgsequence/{tgid}/{qtype}", tgSequenceQuery)
+	mux.HandleFunc("GET /collections/{cid}/items/{fid}/tproperties", listTProperties)
+	mux.HandleFunc("GET /collections/{cid}/items/{fid}/tproperties/{pname}", getTProperty)
 
 	addr := ":" + strconv.Itoa(envInt("MFAPI_PORT", 8088))
 	srv := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second}
@@ -134,13 +142,19 @@ func landing(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{
 		"title": "MobilityAPI-go", "description": "OGC API – Moving Features over MobilityDB",
 		"links": []map[string]string{
-			{"rel": "self", "href": "/"}, {"rel": "conformance", "href": "/conformance"}, {"rel": "data", "href": "/collections"},
+			{"rel": "self", "href": "/", "type": "application/json"},
+			{"rel": "service-desc", "href": "/api", "type": "application/vnd.oai.openapi+json;version=3.0"},
+			{"rel": "conformance", "href": "/conformance", "type": "application/json"},
+			{"rel": "data", "href": "/collections", "type": "application/json"},
 		}})
 }
 func conformance(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"conformsTo": []string{
+		"http://www.opengis.net/spec/ogcapi-movingfeatures-1/1.0/conf/common",
+		"http://www.opengis.net/spec/ogcapi-movingfeatures-1/1.0/conf/mf-collection",
 		"http://www.opengis.net/spec/ogcapi-movingfeatures-1/1.0/conf/movingfeatures",
 		"http://www.opengis.net/spec/ogcapi-common-1/1.0/conf/core",
+		"http://www.opengis.net/spec/ogcapi-common-2/1.0/conf/collections",
 	}})
 }
 func listCollections(w http.ResponseWriter, r *http.Request) {
@@ -195,8 +209,13 @@ func itemFilters(tbl string, srid int, q map[string][]string) (where string, tgE
 		add("trip && stbox(ST_MakeEnvelope($"+itoa(n+1)+",$"+itoa(n+2)+",$"+itoa(n+3)+",$"+itoa(n+4)+",$"+itoa(n+5)+"))",
 			f[0], f[1], f[2], f[3], srid)
 	}
-	if first(q, "subTrajectory") == "true" && first(q, "datetime") == "" {
-		return "", "", nil, errors.New("subTrajectory requires a bounded datetime interval")
+	// OGC uses lowercase "subtrajectory"; accept the camelCase form too.
+	sub := first(q, "subtrajectory")
+	if sub == "" {
+		sub = first(q, "subTrajectory")
+	}
+	if sub == "true" && first(q, "datetime") == "" {
+		return "", "", nil, errors.New("subtrajectory requires a bounded datetime interval")
 	}
 	// datetime: start/end (RFC3339 interval) -> && on the time dimension
 	dt := first(q, "datetime")
@@ -208,7 +227,7 @@ func itemFilters(tbl string, srid int, q map[string][]string) (where string, tgE
 		n := len(args)
 		span := "$" + itoa(n+1) + "::tstzspan"
 		add("trip && "+span, "["+s+", "+e+"]")
-		if first(q, "subTrajectory") == "true" {
+		if sub == "true" {
 			// clip each trajectory to the window; drop rows whose values fall in
 			// a temporal gap (the time box overlaps but atTime is empty)
 			tgExpr = "atTime(trip, " + span + ")"
@@ -311,6 +330,233 @@ func getItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeRaw(w, 200, ogcify(body))
+}
+
+// propSpec is a temporal property derived from the trajectory by an exact
+// MobilityDB function (no resampling). speed/azimuth are piecewise-constant
+// (Step) because the position is linearly interpolated between observations;
+// cumulativeLength accumulates per segment (Linear). The handlers report each
+// function's true interpolation — they do not coerce it.
+type propSpec struct{ expr, uom, desc string }
+
+var tProps = map[string]propSpec{
+	"velocity": {"speed(trip)", "m/s", "Speed over ground (velocity magnitude), a piecewise-constant function of the trajectory."},
+	"speed":    {"speed(trip)", "m/s", "Speed over ground, a piecewise-constant function of the trajectory."},
+	"distance": {"cumulativeLength(trip)", "m", "Cumulative distance travelled along the trajectory."},
+	"heading":  {"azimuth(trip)", "rad", "Heading (azimuth) over ground in radians, a piecewise-constant function of the trajectory."},
+}
+var tPropList = []string{"velocity", "distance", "heading"}
+
+// clip wraps a temporal expression with atTime for the OGC leaf (instant set)
+// or datetime (interval) selector, binding the selector value as a parameter.
+func clip(expr string, q url.Values, args []any) (string, []any, error) {
+	if lf := q.Get("leaf"); lf != "" {
+		set, err := tstzSet(lf)
+		if err != nil {
+			return "", nil, err
+		}
+		args = append(args, set)
+		return "atTime(" + expr + ", $" + itoa(len(args)) + "::tstzset)", args, nil
+	}
+	if dt := q.Get("datetime"); dt != "" {
+		if s, e, ok := splitInterval(dt); ok {
+			args = append(args, "["+s+", "+e+"]")
+			return "atTime(" + expr + ", $" + itoa(len(args)) + "::tstzspan)", args, nil
+		}
+		args = append(args, "{"+strings.TrimSpace(dt)+"}") // a single instant
+		return "atTime(" + expr + ", $" + itoa(len(args)) + "::tstzset)", args, nil
+	}
+	return expr, args, nil
+}
+
+// tgSequence returns the moving feature's temporal geometry (MF-JSON), optionally
+// clipped to a datetime interval or to leaf instants.
+func tgSequence(w http.ResponseWriter, r *http.Request) {
+	tbl, _, ok := collectionMeta(r.Context(), r.PathValue("cid"))
+	if !ok {
+		httpErr(w, 404, "collection not found")
+		return
+	}
+	fid, err := strconv.Atoi(r.PathValue("fid"))
+	if err != nil {
+		httpErr(w, 400, "invalid feature id")
+		return
+	}
+	expr, args, cerr := clip("trip", r.URL.Query(), []any{fid})
+	if cerr != nil {
+		httpErr(w, 400, cerr.Error())
+		return
+	}
+	var body *string
+	err = pool.QueryRow(r.Context(), "SELECT asMFJSON("+expr+")::text FROM "+ident(tbl)+" WHERE id=$1", args...).Scan(&body)
+	if errors.Is(err, pgx.ErrNoRows) {
+		httpErr(w, 404, "feature not found")
+		return
+	}
+	if err != nil {
+		httpErr(w, 400, err.Error())
+		return
+	}
+	if body == nil {
+		httpErr(w, 404, "no temporal geometry for the requested selector")
+		return
+	}
+	writeRaw(w, 200, ogcify(*body))
+}
+
+// tgSequenceQuery serves the OGC TemporalGeometry derived queries. distance and
+// velocity are exact MobilityDB functions; acceleration is NOT_IMPLEMENTED
+// because with linearly interpolated position the speed is piecewise-constant,
+// so its derivative is zero within each segment and undefined at the vertices.
+func tgSequenceQuery(w http.ResponseWriter, r *http.Request) {
+	q := strings.ToLower(r.PathValue("qtype"))
+	if q == "acceleration" {
+		httpErr(w, 501, "acceleration is not derivable: linearly interpolated position gives a piecewise-constant (Step) speed, whose derivative is zero within each segment and undefined at the vertices")
+		return
+	}
+	if q != "velocity" && q != "distance" {
+		httpErr(w, 404, "unknown query type: "+q)
+		return
+	}
+	tbl, _, ok := collectionMeta(r.Context(), r.PathValue("cid"))
+	if !ok {
+		httpErr(w, 404, "collection not found")
+		return
+	}
+	writeTemporalProperty(w, r, tbl, q, tProps[q])
+}
+
+// getTProperty serves one derived temporal property as an OGC temporalProperty.
+func getTProperty(w http.ResponseWriter, r *http.Request) {
+	name := strings.ToLower(r.PathValue("pname"))
+	spec, ok := tProps[name]
+	if !ok {
+		httpErr(w, 404, "unknown temporal property: "+name)
+		return
+	}
+	tbl, _, ok := collectionMeta(r.Context(), r.PathValue("cid"))
+	if !ok {
+		httpErr(w, 404, "collection not found")
+		return
+	}
+	writeTemporalProperty(w, r, tbl, name, spec)
+}
+
+// writeTemporalProperty builds the OGC temporalProperty object in SQL: the
+// derived tfloat is serialised with asMFJSON and reshaped into a valueSequence,
+// carrying each segment's own interpolation verbatim from MobilityDB.
+func writeTemporalProperty(w http.ResponseWriter, r *http.Request, tbl, name string, spec propSpec) {
+	fid, err := strconv.Atoi(r.PathValue("fid"))
+	if err != nil {
+		httpErr(w, 400, "invalid feature id")
+		return
+	}
+	expr, args, cerr := clip(spec.expr, r.URL.Query(), []any{fid, name, spec.uom, spec.desc})
+	if cerr != nil {
+		httpErr(w, 400, cerr.Error())
+		return
+	}
+	args = append(args, r.URL.Path)
+	selfP := "$" + itoa(len(args))
+	// asMFJSON emits continuous values under "sequences" and discrete values
+	// (instants / leaf selection) as a single top-level values/datetimes object;
+	// reshape both into the OGC valueSequence, keeping the true interpolation.
+	sql := "WITH base AS (SELECT asMFJSON(" + expr + ")::jsonb AS j FROM " + ident(tbl) + " WHERE id=$1) " +
+		"SELECT jsonb_build_object('name',$2::text,'type','TReal','form',$3::text,'description',$4::text," +
+		"'valueSequence', CASE" +
+		" WHEN j ? 'sequences' THEN coalesce((SELECT jsonb_agg(jsonb_build_object(" +
+		"'datetimes',seq->'datetimes','values',seq->'values','interpolation',j->>'interpolation'," +
+		"'lower_inc',seq->'lower_inc','upper_inc',seq->'upper_inc') ORDER BY ord) " +
+		"FROM jsonb_array_elements(j->'sequences') WITH ORDINALITY AS t(seq,ord)),'[]'::jsonb)" +
+		" WHEN j ? 'datetimes' THEN jsonb_build_array(jsonb_build_object(" +
+		"'datetimes',j->'datetimes','values',j->'values','interpolation',j->>'interpolation'," +
+		"'lower_inc',j->'lower_inc','upper_inc',j->'upper_inc'))" +
+		" ELSE '[]'::jsonb END," +
+		"'links',jsonb_build_array(jsonb_build_object('rel','self','href'," + selfP + "::text)))::text FROM base"
+	var body string
+	err = pool.QueryRow(r.Context(), sql, args...).Scan(&body)
+	if errors.Is(err, pgx.ErrNoRows) {
+		httpErr(w, 404, "feature not found")
+		return
+	}
+	if err != nil {
+		httpErr(w, 400, err.Error())
+		return
+	}
+	writeRaw(w, 200, ogcify(body))
+}
+
+// listTProperties lists the derived temporal properties available for a feature.
+func listTProperties(w http.ResponseWriter, r *http.Request) {
+	tbl, _, ok := collectionMeta(r.Context(), r.PathValue("cid"))
+	if !ok {
+		httpErr(w, 404, "collection not found")
+		return
+	}
+	fid, err := strconv.Atoi(r.PathValue("fid"))
+	if err != nil {
+		httpErr(w, 400, "invalid feature id")
+		return
+	}
+	var one int
+	if err := pool.QueryRow(r.Context(), "SELECT 1 FROM "+ident(tbl)+" WHERE id=$1", fid).Scan(&one); err != nil {
+		httpErr(w, 404, "feature not found")
+		return
+	}
+	base := r.URL.Path
+	list := make([]map[string]any, 0, len(tPropList))
+	for _, n := range tPropList {
+		s := tProps[n]
+		list = append(list, map[string]any{"name": n, "type": "TReal", "form": s.uom, "description": s.desc,
+			"links": []map[string]string{{"rel": "self", "href": base + "/" + n}}})
+	}
+	writeJSON(w, 200, map[string]any{
+		"temporalProperties": list, "numberReturned": len(list), "numberMatched": len(list),
+		"timeStamp": time.Now().UTC().Format(time.RFC3339),
+		"links":     []map[string]string{{"rel": "self", "href": base}},
+	})
+}
+
+func tstzSet(csv string) (string, error) {
+	parts := strings.Split(csv, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	if len(out) == 0 {
+		return "", errors.New("empty leaf selector")
+	}
+	return "{" + strings.Join(out, ", ") + "}", nil
+}
+
+// apiDoc serves a minimal OpenAPI definition (the OGC service-desc resource).
+func apiDoc(w http.ResponseWriter, r *http.Request) {
+	get := func(summary string) map[string]any {
+		return map[string]any{"get": map[string]any{"summary": summary,
+			"responses": map[string]any{"200": map[string]any{"description": "OK"}}}}
+	}
+	doc := map[string]any{
+		"openapi": "3.0.3",
+		"info":    map[string]any{"title": "MobilityAPI-go", "version": "1.0.0", "description": "OGC API – Moving Features over MobilityDB"},
+		"paths": map[string]any{
+			"/":                              get("Landing page"),
+			"/conformance":                   get("Conformance declaration"),
+			"/collections":                   get("Moving feature collections"),
+			"/collections/{cid}":             get("Collection metadata"),
+			"/collections/{cid}/items":       get("Moving features (streamed, keyset-paged; bbox/datetime/subtrajectory filters)"),
+			"/collections/{cid}/items/{fid}": get("A moving feature as a Feature"),
+			"/collections/{cid}/items/{fid}/tgsequence":                get("Temporal geometry sequence (MF-JSON)"),
+			"/collections/{cid}/items/{fid}/tgsequence/{tgid}/{qtype}": get("Temporal geometry derived query: distance | velocity (acceleration is not derivable for this motion model)"),
+			"/collections/{cid}/items/{fid}/tproperties":               get("Derived temporal properties of a feature"),
+			"/collections/{cid}/items/{fid}/tproperties/{pname}":       get("A derived temporal property (velocity | distance | heading)"),
+			"/collections/{cid}/export":                                get("Bulk lakehouse export: NDJSON, or ?format=parquet (WKB + bbox/time sidecar)"),
+		},
+	}
+	w.Header().Set("Content-Type", "application/vnd.oai.openapi+json;version=3.0")
+	w.WriteHeader(200)
+	json.NewEncoder(w).Encode(doc)
 }
 
 // export is the bulk lakehouse feed, streamed from a server-side cursor so

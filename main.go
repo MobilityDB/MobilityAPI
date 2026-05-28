@@ -97,6 +97,15 @@ func main() {
 	mux.HandleFunc("GET /collections/{cid}/items/{fid}/tgsequence/{tgid}/{qtype}", tgSequenceQuery)
 	mux.HandleFunc("GET /collections/{cid}/items/{fid}/tproperties", listTProperties)
 	mux.HandleFunc("GET /collections/{cid}/items/{fid}/tproperties/{pname}", getTProperty)
+	// writes: replace / delete a feature, append a temporally-disjoint sub-trajectory
+	mux.HandleFunc("PUT /collections/{cid}/items/{fid}", putItem)
+	mux.HandleFunc("DELETE /collections/{cid}/items/{fid}", deleteItem)
+	mux.HandleFunc("POST /collections/{cid}/items/{fid}/tgsequence", postTgSequence)
+	// derived properties are computed from the geometry, not independently stored
+	mux.HandleFunc("POST /collections/{cid}/items/{fid}/tproperties", derivedReadOnly)
+	mux.HandleFunc("POST /collections/{cid}/items/{fid}/tproperties/{pname}", derivedReadOnly)
+	mux.HandleFunc("DELETE /collections/{cid}/items/{fid}/tproperties/{pname}", derivedReadOnly)
+	mux.HandleFunc("DELETE /collections/{cid}/items/{fid}/tgsequence/{tgid}", deleteTgSequence)
 
 	addr := ":" + strconv.Itoa(envInt("MFAPI_PORT", 8088))
 	srv := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second}
@@ -706,6 +715,134 @@ func postItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 201, map[string]any{"message": "created", "id": strconv.FormatInt(id, 10)})
+}
+
+// featureTG decodes the temporalGeometry and name from a posted Feature (or a
+// bare temporalGeometry), mapping the OGC interpolation token to MobilityDB.
+func featureTG(r *http.Request) (tgText string, name string, err error) {
+	var raw map[string]any
+	if e := json.NewDecoder(r.Body).Decode(&raw); e != nil {
+		return "", "", errors.New("invalid JSON body")
+	}
+	tg := raw
+	if inner, ok := raw["temporalGeometry"].(map[string]any); ok {
+		tg = inner
+	}
+	if tg["type"] == nil {
+		return "", "", errors.New("missing temporalGeometry")
+	}
+	if interp, ok := tg["interpolation"].(string); ok {
+		if m, ok := ogc2mdbInterp[interp]; ok {
+			tg["interpolation"] = m
+		}
+	}
+	if props, ok := raw["properties"].(map[string]any); ok {
+		name, _ = props["name"].(string)
+	}
+	b, _ := json.Marshal(tg)
+	return string(b), name, nil
+}
+
+// putItem replaces a moving feature's temporal geometry (and name).
+func putItem(w http.ResponseWriter, r *http.Request) {
+	tbl, srid, ok := collectionMeta(r.Context(), r.PathValue("cid"))
+	if !ok {
+		httpErr(w, 404, "collection not found")
+		return
+	}
+	fid, err := strconv.Atoi(r.PathValue("fid"))
+	if err != nil {
+		httpErr(w, 400, "invalid feature id")
+		return
+	}
+	tgText, name, derr := featureTG(r)
+	if derr != nil {
+		httpErr(w, 400, derr.Error())
+		return
+	}
+	ct, err := pool.Exec(r.Context(),
+		"UPDATE "+ident(tbl)+" SET name=$2, trip=setSRID(tgeompointFromMFJSON($3), $4) WHERE id=$1",
+		fid, name, tgText, srid)
+	if err != nil {
+		httpErr(w, 400, "update failed: "+err.Error())
+		return
+	}
+	if ct.RowsAffected() == 0 {
+		httpErr(w, 404, "feature not found")
+		return
+	}
+	writeJSON(w, 200, map[string]any{"message": "replaced", "id": strconv.Itoa(fid)})
+}
+
+// deleteItem removes a moving feature.
+func deleteItem(w http.ResponseWriter, r *http.Request) {
+	tbl, _, ok := collectionMeta(r.Context(), r.PathValue("cid"))
+	if !ok {
+		httpErr(w, 404, "collection not found")
+		return
+	}
+	fid, err := strconv.Atoi(r.PathValue("fid"))
+	if err != nil {
+		httpErr(w, 400, "invalid feature id")
+		return
+	}
+	ct, err := pool.Exec(r.Context(), "DELETE FROM "+ident(tbl)+" WHERE id=$1", fid)
+	if err != nil {
+		httpErr(w, 500, err.Error())
+		return
+	}
+	if ct.RowsAffected() == 0 {
+		httpErr(w, 404, "feature not found")
+		return
+	}
+	w.WriteHeader(204)
+}
+
+// postTgSequence appends a temporally-disjoint sub-trajectory to the feature's
+// temporal geometry. MobilityDB's merge rejects time overlap (mapped to 409).
+func postTgSequence(w http.ResponseWriter, r *http.Request) {
+	tbl, srid, ok := collectionMeta(r.Context(), r.PathValue("cid"))
+	if !ok {
+		httpErr(w, 404, "collection not found")
+		return
+	}
+	fid, err := strconv.Atoi(r.PathValue("fid"))
+	if err != nil {
+		httpErr(w, 400, "invalid feature id")
+		return
+	}
+	tgText, _, derr := featureTG(r)
+	if derr != nil {
+		httpErr(w, 400, derr.Error())
+		return
+	}
+	ct, err := pool.Exec(r.Context(),
+		"UPDATE "+ident(tbl)+" SET trip=merge(trip, setSRID(tgeompointFromMFJSON($2), $3)) WHERE id=$1",
+		fid, tgText, srid)
+	if err != nil {
+		if strings.Contains(err.Error(), "overlap") {
+			httpErr(w, 409, "the sub-trajectory overlaps the existing temporal geometry in time: "+err.Error())
+			return
+		}
+		httpErr(w, 400, "append failed: "+err.Error())
+		return
+	}
+	if ct.RowsAffected() == 0 {
+		httpErr(w, 404, "feature not found")
+		return
+	}
+	writeJSON(w, 200, map[string]any{"message": "appended", "id": strconv.Itoa(fid)})
+}
+
+// derivedReadOnly answers writes to derived temporal properties: they are
+// computed from the trajectory, so they are modified through the geometry.
+func derivedReadOnly(w http.ResponseWriter, r *http.Request) {
+	httpErr(w, 501, "temporal properties here (velocity, distance, heading) are derived from the trajectory and are not independently writable; modify the temporal geometry instead")
+}
+
+// deleteTgSequence: the feature carries a single inseparable temporal geometry.
+func deleteTgSequence(w http.ResponseWriter, r *http.Request) {
+	httpErr(w, 501, "the moving feature has a single temporal geometry; delete the feature (DELETE .../items/{fid}) rather than an individual temporal primitive")
 }
 
 // small helpers

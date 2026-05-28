@@ -61,6 +61,11 @@ func main() {
 		log.Fatal(err)
 	}
 	cfg.MaxConns = 16 // the connection-pool knob — the concurrency story vs a single-threaded Python server
+	if v := os.Getenv("MFAPI_MAXCONNS"); v != "" {
+		if n, e := strconv.Atoi(v); e == nil && n > 0 {
+			cfg.MaxConns = int32(n)
+		}
+	}
 	pool, err = pgxpool.NewWithConfig(context.Background(), cfg)
 	if err != nil {
 		log.Fatal(err)
@@ -71,6 +76,9 @@ func main() {
 	}
 
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
+		writeJSONString(w, 200, `{"status":"ok"}`) // DB-free: pure tier ceiling
+	})
 	mux.HandleFunc("GET /", landing)
 	mux.HandleFunc("GET /conformance", conformance)
 	mux.HandleFunc("GET /collections", listCollections)

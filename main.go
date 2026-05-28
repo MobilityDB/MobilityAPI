@@ -147,6 +147,24 @@ func collectionMeta(ctx context.Context, cid string) (table string, srid int, ok
 }
 func ident(s string) string { return `"` + strings.ReplaceAll(s, `"`, `""`) + `"` }
 
+// featureObj builds the OGC MovingFeature JSON for a row exposing columns id,
+// mmsi, name plus a geometry g and its STBOX b. sp and cp are the SQL parameter
+// placeholders for the collection SRID and id. crs is emitted in EPSG:n form and
+// rewritten to the OGC URN by ogcify; bbox/time come from the inline STBOX.
+func featureObj(g, b, sp, cp string, withGeom bool) string {
+	s := "jsonb_build_object('type','Feature','id',id::text," +
+		"'properties',jsonb_build_object('mmsi',mmsi,'name',name)," +
+		"'crs',jsonb_build_object('type','Name','properties',jsonb_build_object('name','EPSG:'||" + sp + "::text))," +
+		"'trs',jsonb_build_object('type','Link','properties',jsonb_build_object('type','ogcdef','href','http://www.opengis.net/def/uom/ISO-8601/0/Gregorian'))," +
+		"'bbox',jsonb_build_array(Xmin(" + b + "),Ymin(" + b + "),Xmax(" + b + "),Ymax(" + b + "))," +
+		"'time',jsonb_build_array(Tmin(" + b + ")::text,Tmax(" + b + ")::text)," +
+		"'temporalGeometry',asMFJSON(" + g + ")::jsonb,"
+	if withGeom {
+		s += "'geometry',ST_AsGeoJSON(trajectory(" + g + "))::jsonb,"
+	}
+	return s + "'links',jsonb_build_array(jsonb_build_object('rel','self','href','/collections/'||" + cp + "||'/items/'||id)))"
+}
+
 func landing(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{
 		"title": "MobilityAPI-go", "description": "OGC API – Moving Features over MobilityDB",
@@ -170,9 +188,12 @@ func listCollections(w http.ResponseWriter, r *http.Request) {
 	var body string
 	if err := pool.QueryRow(r.Context(), `SELECT jsonb_build_object('collections',
 	  coalesce(jsonb_agg(jsonb_build_object('id',id,'title',title,'description',description,'itemType',item_type,
+	    'crs', jsonb_build_array('http://www.opengis.net/def/crs/EPSG/0/'||crs),
 	    'links', jsonb_build_array(
+	      jsonb_build_object('rel','self','href','/collections/'||id),
 	      jsonb_build_object('rel','items','href','/collections/'||id||'/items'),
-	      jsonb_build_object('rel','enclosure','href','/collections/'||id||'/export','type','application/x-ndjson')))),'[]'::jsonb))::text
+	      jsonb_build_object('rel','enclosure','href','/collections/'||id||'/export','type','application/x-ndjson')))),'[]'::jsonb),
+	  'links', jsonb_build_array(jsonb_build_object('rel','self','href','/collections')))::text
 	  FROM collections`).Scan(&body); err != nil {
 		httpErr(w, 500, err.Error())
 		return
@@ -180,13 +201,40 @@ func listCollections(w http.ResponseWriter, r *http.Request) {
 	writeRaw(w, 200, body)
 }
 func getCollection(w http.ResponseWriter, r *http.Request) {
-	var body string
-	if err := pool.QueryRow(r.Context(), `SELECT jsonb_build_object('id',id,'title',title,'description',description,'itemType',item_type)::text
-	  FROM collections WHERE id=$1`, r.PathValue("cid")).Scan(&body); err != nil {
+	cid := r.PathValue("cid")
+	tbl, srid, ok := collectionMeta(r.Context(), cid)
+	if !ok {
 		httpErr(w, 404, "collection not found")
 		return
 	}
-	writeRaw(w, 200, body)
+	var title, desc, itemType string
+	if err := pool.QueryRow(r.Context(), `SELECT title,description,item_type FROM collections WHERE id=$1`, cid).
+		Scan(&title, &desc, &itemType); err != nil {
+		httpErr(w, 404, "collection not found")
+		return
+	}
+	crsURI := "http://www.opengis.net/def/crs/EPSG/0/" + itoa(srid)
+	col := map[string]any{
+		"id": cid, "title": title, "description": desc, "itemType": itemType,
+		"crs": []string{crsURI},
+		"links": []map[string]string{
+			{"rel": "self", "href": "/collections/" + cid},
+			{"rel": "items", "href": "/collections/" + cid + "/items"},
+			{"rel": "enclosure", "href": "/collections/" + cid + "/export", "type": "application/x-ndjson"},
+		},
+	}
+	// extent: spatial bbox and temporal interval from the collection's STBOX
+	var xmin, ymin, xmax, ymax *float64
+	var tmin, tmax *string
+	if err := pool.QueryRow(r.Context(), "SELECT Xmin(e),Ymin(e),Xmax(e),Ymax(e),Tmin(e)::text,Tmax(e)::text "+
+		"FROM (SELECT extent(trip) e FROM "+ident(tbl)+") s").Scan(&xmin, &ymin, &xmax, &ymax, &tmin, &tmax); err == nil &&
+		xmin != nil && tmin != nil {
+		col["extent"] = map[string]any{
+			"spatial":  map[string]any{"bbox": [][]float64{{*xmin, *ymin, *xmax, *ymax}}, "crs": crsURI},
+			"temporal": map[string]any{"interval": [][]string{{*tmin, *tmax}}, "trs": "http://www.opengis.net/def/uom/ISO-8601/0/Gregorian"},
+		}
+	}
+	writeJSON(w, 200, col)
 }
 
 // itemFilters builds the index-using WHERE clause and the temporalGeometry
@@ -276,11 +324,15 @@ func streamItems(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	args = append(args, limit)
-	sql := "SELECT id, jsonb_build_object('type','Feature','id',id::text," +
-		"'properties',jsonb_build_object('mmsi',mmsi,'name',name)," +
-		"'temporalGeometry', asMFJSON(" + tgExpr + ")::jsonb)::text " +
-		"FROM " + ident(tbl) + " " + where +
-		" ORDER BY id LIMIT $" + itoa(len(args))
+	lp := "$" + itoa(len(args))
+	args = append(args, itoa(srid))
+	sp := "$" + itoa(len(args))
+	args = append(args, r.PathValue("cid"))
+	cp := "$" + itoa(len(args))
+	sql := "SELECT id, " + featureObj("g", "b", sp, cp, false) + "::text FROM (" +
+		"SELECT id, mmsi, name, g, stbox(g) AS b FROM (" +
+		"SELECT id, mmsi, name, " + tgExpr + " AS g FROM " + ident(tbl) + " " + where +
+		" ORDER BY id LIMIT " + lp + ") i) s ORDER BY id"
 	rows, err := pool.Query(r.Context(), sql, args...)
 	if err != nil {
 		httpErr(w, 500, err.Error())
@@ -321,7 +373,7 @@ func streamItems(w http.ResponseWriter, r *http.Request) {
 }
 
 func getItem(w http.ResponseWriter, r *http.Request) {
-	tbl, _, ok := collectionMeta(r.Context(), r.PathValue("cid"))
+	tbl, srid, ok := collectionMeta(r.Context(), r.PathValue("cid"))
 	if !ok {
 		httpErr(w, 404, "collection not found")
 		return
@@ -331,10 +383,11 @@ func getItem(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, 400, "invalid feature id")
 		return
 	}
+	sql := "SELECT " + featureObj("g", "b", "$2", "$3", true) + "::text FROM (" +
+		"SELECT id, mmsi, name, g, stbox(g) AS b FROM (" +
+		"SELECT id, mmsi, name, trip AS g FROM " + ident(tbl) + " WHERE id=$1) i) s"
 	var body string
-	if err := pool.QueryRow(r.Context(), "SELECT jsonb_build_object('type','Feature','id',id::text,"+
-		"'properties',jsonb_build_object('mmsi',mmsi,'name',name),'temporalGeometry',asMFJSON(trip)::jsonb)::text "+
-		"FROM "+ident(tbl)+" WHERE id=$1", fid).Scan(&body); err != nil {
+	if err := pool.QueryRow(r.Context(), sql, fid, itoa(srid), r.PathValue("cid")).Scan(&body); err != nil {
 		httpErr(w, 404, "feature not found")
 		return
 	}

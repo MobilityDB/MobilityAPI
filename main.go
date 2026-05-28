@@ -1,50 +1,57 @@
 // MobilityAPI-go — a thin, compiled OGC API – Moving Features tier over
-// MobilityDB. Every temporal computation and (de)serialization runs in the
-// database (asMFJSON / tgeompointFromMFJSON); this process only routes,
-// pools connections, and applies the small OGC<->MobilityDB convention
-// mapping (crs name + interpolation enum). No MEOS in the application tier
-// (no cgo, no PyMEOS) — the parallel-path counterpart to the PyMEOS server.
+// MobilityDB, built for very large databases and the lakehouse direction:
+//   * streaming responses (the FeatureCollection is written row-by-row from a
+//     server-side cursor, so memory is bounded regardless of result size);
+//   * keyset pagination (WHERE id > :after) with OGC next links — no OFFSET;
+//   * index-using spatial/temporal filters (bbox, datetime) pushed to the
+//     MobilityDB GiST index via the && operator;
+//   * a streaming NDJSON bulk-export endpoint the lake (DuckDB / MobilityDuck /
+//     Spark) can ingest directly.
+// All temporal work and (de)serialization run in MobilityDB (asMFJSON,
+// atTime, tgeompointFromMFJSON); the tier holds no MEOS (no cgo, no PyMEOS).
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
+	"os/signal"
 	"regexp"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-var pool *pgxpool.Pool
+var (
+	pool         *pgxpool.Pool
+	defaultLimit = envInt("MFAPI_DEFAULT_LIMIT", 100)
+	maxLimit     = envInt("MFAPI_MAX_LIMIT", 10000)
+	exportBatch  = envInt("MFAPI_EXPORT_LIMIT", 0) // 0 = unbounded stream
+)
 
-// Assessed against live MobilityDB: it rejects OGC "Stepwise" and uses "Step";
-// "Linear"/"Discrete" pass through. crs in MobilityDB MF-JSON is "EPSG:<n>",
-// OGC uses the URN form. These two field mappings are the entire adapter.
+// OGC <-> MobilityDB conventions (assessed against live MobilityDB):
+// MobilityDB rejects "Stepwise" and uses "Step"; crs is "EPSG:<n>" vs the URN.
 var ogc2mdbInterp = map[string]string{"Linear": "Linear", "Stepwise": "Step", "Discrete": "Discrete"}
-
-func ogcifyResponse(s string) string {
-	// MobilityDB MF-JSON -> OGC MovingFeaturesJSON (compact jsonb output)
-	s = strings.ReplaceAll(s, `"interpolation": "Step"`, `"interpolation": "Stepwise"`)
-	s = strings.ReplaceAll(s, `"interpolation":"Step"`, `"interpolation":"Stepwise"`)
-	// crs name "EPSG:25832" -> "urn:ogc:def:crs:EPSG::25832"
-	s = epsgName.ReplaceAllString(s, `"name":"urn:ogc:def:crs:EPSG::$1"`)
-	return s
-}
-
 var epsgName = regexp.MustCompile(`"name":\s*"EPSG:(\d+)"`)
 var epsgURN = regexp.MustCompile(`EPSG:+(\d+)`)
 
-func epsgFromCRS(raw json.RawMessage, def int) int {
-	if len(raw) == 0 {
-		return def
-	}
-	if m := epsgURN.FindStringSubmatch(string(raw)); m != nil {
-		if n, err := strconv.Atoi(m[1]); err == nil {
+func ogcify(s string) string {
+	s = strings.ReplaceAll(s, `"interpolation": "Step"`, `"interpolation": "Stepwise"`)
+	s = strings.ReplaceAll(s, `"interpolation":"Step"`, `"interpolation":"Stepwise"`)
+	return epsgName.ReplaceAllString(s, `"name":"urn:ogc:def:crs:EPSG::$1"`)
+}
+
+func envInt(k string, def int) int {
+	if v := os.Getenv(k); v != "" {
+		if n, e := strconv.Atoi(v); e == nil {
 			return n
 		}
 	}
@@ -60,12 +67,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	cfg.MaxConns = 16 // the connection-pool knob — the concurrency story vs a single-threaded Python server
-	if v := os.Getenv("MFAPI_MAXCONNS"); v != "" {
-		if n, e := strconv.Atoi(v); e == nil && n > 0 {
-			cfg.MaxConns = int32(n)
-		}
-	}
+	cfg.MaxConns = int32(envInt("MFAPI_MAXCONNS", 16))
 	pool, err = pgxpool.NewWithConfig(context.Background(), cfg)
 	if err != nil {
 		log.Fatal(err)
@@ -76,133 +78,220 @@ func main() {
 	}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
-		writeJSONString(w, 200, `{"status":"ok"}`) // DB-free: pure tier ceiling
-	})
+	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) { writeRaw(w, 200, `{"status":"ok"}`) })
 	mux.HandleFunc("GET /", landing)
 	mux.HandleFunc("GET /conformance", conformance)
 	mux.HandleFunc("GET /collections", listCollections)
 	mux.HandleFunc("GET /collections/{cid}", getCollection)
-	mux.HandleFunc("GET /collections/{cid}/items", getItems)
+	mux.HandleFunc("GET /collections/{cid}/items", streamItems)
 	mux.HandleFunc("GET /collections/{cid}/items/{fid}", getItem)
 	mux.HandleFunc("POST /collections/{cid}/items", postItem)
+	mux.HandleFunc("GET /collections/{cid}/export", exportNDJSON) // lakehouse bulk feed
 
-	addr := ":8088"
-	log.Printf("MobilityAPI-go listening on %s (pool max=%d) — thin Go over MobilityDB SQL", addr, cfg.MaxConns)
-	srv := &http.Server{Addr: addr, Handler: mux, ReadTimeout: 30 * time.Second, WriteTimeout: 120 * time.Second}
-	log.Fatal(srv.ListenAndServe())
+	addr := ":" + strconv.Itoa(envInt("MFAPI_PORT", 8088))
+	srv := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second}
+	// streaming/export responses can be long-lived: no WriteTimeout (use ctx).
+	go func() {
+		log.Printf("MobilityAPI-go on %s (pool max=%d, default/max limit=%d/%d) — streaming, keyset-paged, lakehouse-ready", addr, cfg.MaxConns, defaultLimit, maxLimit)
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Fatal(err)
+		}
+	}()
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
+	<-sig
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	srv.Shutdown(ctx)
+	log.Println("shut down")
 }
 
-func writeJSONString(w http.ResponseWriter, code int, body string) {
+func writeRaw(w http.ResponseWriter, code int, body string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	w.Write([]byte(body))
 }
-
 func writeJSON(w http.ResponseWriter, code int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	json.NewEncoder(w).Encode(v)
 }
-
 func httpErr(w http.ResponseWriter, code int, desc string) {
 	writeJSON(w, code, map[string]any{"code": strconv.Itoa(code), "description": desc})
 }
 
-// collectionTable validates the collection id against the registry and returns
-// its feature table name (whitelist — no string interpolation of user input).
-func collectionTable(ctx context.Context, cid string) (string, bool) {
-	var ok bool
-	if err := pool.QueryRow(ctx, `SELECT true FROM collections WHERE id=$1`, cid).Scan(&ok); err != nil {
-		return "", false
-	}
-	return cid, ok // table name == collection id in this schema (registry-validated)
+// collectionMeta validates the collection id against the registry and returns
+// the feature table name and crs (whitelist — no interpolation of user input).
+func collectionMeta(ctx context.Context, cid string) (table string, srid int, ok bool) {
+	err := pool.QueryRow(ctx, `SELECT id, crs FROM collections WHERE id=$1`, cid).Scan(&table, &srid)
+	return table, srid, err == nil
 }
+func ident(s string) string { return `"` + strings.ReplaceAll(s, `"`, `""`) + `"` }
 
 func landing(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{
-		"title":       "MobilityAPI-go",
-		"description": "OGC API – Moving Features over MobilityDB (thin Go tier)",
+		"title": "MobilityAPI-go", "description": "OGC API – Moving Features over MobilityDB",
 		"links": []map[string]string{
-			{"rel": "self", "href": "/", "type": "application/json"},
-			{"rel": "conformance", "href": "/conformance"},
-			{"rel": "data", "href": "/collections"},
-		},
-	})
+			{"rel": "self", "href": "/"}, {"rel": "conformance", "href": "/conformance"}, {"rel": "data", "href": "/collections"},
+		}})
 }
-
 func conformance(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"conformsTo": []string{
 		"http://www.opengis.net/spec/ogcapi-movingfeatures-1/1.0/conf/movingfeatures",
 		"http://www.opengis.net/spec/ogcapi-common-1/1.0/conf/core",
 	}})
 }
-
 func listCollections(w http.ResponseWriter, r *http.Request) {
 	var body string
-	err := pool.QueryRow(r.Context(), `
-		SELECT jsonb_build_object('collections',
-		  coalesce(jsonb_agg(jsonb_build_object(
-		    'id', id, 'title', title, 'description', description,
-		    'itemType', item_type,
-		    'links', jsonb_build_array(jsonb_build_object('rel','items','href','/collections/'||id||'/items'))
-		  )), '[]'::jsonb))::text
-		FROM collections`).Scan(&body)
-	if err != nil {
+	if err := pool.QueryRow(r.Context(), `SELECT jsonb_build_object('collections',
+	  coalesce(jsonb_agg(jsonb_build_object('id',id,'title',title,'description',description,'itemType',item_type,
+	    'links', jsonb_build_array(
+	      jsonb_build_object('rel','items','href','/collections/'||id||'/items'),
+	      jsonb_build_object('rel','enclosure','href','/collections/'||id||'/export','type','application/x-ndjson')))),'[]'::jsonb))::text
+	  FROM collections`).Scan(&body); err != nil {
 		httpErr(w, 500, err.Error())
 		return
 	}
-	writeJSONString(w, 200, body)
+	writeRaw(w, 200, body)
 }
-
 func getCollection(w http.ResponseWriter, r *http.Request) {
-	cid := r.PathValue("cid")
 	var body string
-	err := pool.QueryRow(r.Context(), `
-		SELECT jsonb_build_object('id',id,'title',title,'description',description,'itemType',item_type)::text
-		FROM collections WHERE id=$1`, cid).Scan(&body)
-	if err != nil {
+	if err := pool.QueryRow(r.Context(), `SELECT jsonb_build_object('id',id,'title',title,'description',description,'itemType',item_type)::text
+	  FROM collections WHERE id=$1`, r.PathValue("cid")).Scan(&body); err != nil {
 		httpErr(w, 404, "collection not found")
 		return
 	}
-	writeJSONString(w, 200, body)
+	writeRaw(w, 200, body)
 }
 
-// getItems — the hot read path. The entire OGC FeatureCollection is assembled
-// in SQL (jsonb + asMFJSON) and streamed; Go only applies the convention map.
-func getItems(w http.ResponseWriter, r *http.Request) {
-	tbl, ok := collectionTable(r.Context(), r.PathValue("cid"))
+// itemFilters builds the index-using WHERE clause and the temporalGeometry
+// expression (clipped when subTrajectory=true) from the OGC query parameters.
+func itemFilters(tbl string, srid int, q map[string][]string) (where string, tgExpr string, args []any, err error) {
+	conds := []string{}
+	add := func(c string, a ...any) { conds = append(conds, c); args = append(args, a...) }
+	// keyset cursor: ?after=<id>
+	if v := first(q, "after"); v != "" {
+		id, e := strconv.ParseInt(v, 10, 64)
+		if e != nil {
+			return "", "", nil, errors.New("invalid 'after'")
+		}
+		add("id > $"+strconv.Itoa(len(args)+1), id)
+	}
+	// bbox: minx,miny,maxx,maxy in the collection CRS -> GiST && via stbox
+	if v := first(q, "bbox"); v != "" {
+		p := strings.Split(v, ",")
+		if len(p) != 4 {
+			return "", "", nil, errors.New("bbox must be minx,miny,maxx,maxy")
+		}
+		f := make([]any, 4)
+		for i := range p {
+			if f[i], err = strconv.ParseFloat(strings.TrimSpace(p[i]), 64); err != nil {
+				return "", "", nil, errors.New("invalid bbox number")
+			}
+		}
+		n := len(args)
+		add("trip && stbox(ST_MakeEnvelope($"+itoa(n+1)+",$"+itoa(n+2)+",$"+itoa(n+3)+",$"+itoa(n+4)+",$"+itoa(n+5)+"))",
+			f[0], f[1], f[2], f[3], srid)
+	}
+	if first(q, "subTrajectory") == "true" && first(q, "datetime") == "" {
+		return "", "", nil, errors.New("subTrajectory requires a bounded datetime interval")
+	}
+	// datetime: start/end (RFC3339 interval) -> && on the time dimension
+	dt := first(q, "datetime")
+	if dt != "" {
+		s, e, ok := splitInterval(dt)
+		if !ok {
+			return "", "", nil, errors.New("datetime must be start/end (RFC3339)")
+		}
+		n := len(args)
+		span := "$" + itoa(n+1) + "::tstzspan"
+		add("trip && "+span, "["+s+", "+e+"]")
+		if first(q, "subTrajectory") == "true" {
+			// clip each trajectory to the window; drop rows whose values fall in
+			// a temporal gap (the time box overlaps but atTime is empty)
+			tgExpr = "atTime(trip, " + span + ")"
+			conds = append(conds, "atTime(trip, "+span+") IS NOT NULL")
+		}
+	}
+	if tgExpr == "" {
+		tgExpr = "trip"
+	}
+	if len(conds) > 0 {
+		where = "WHERE " + strings.Join(conds, " AND ")
+	}
+	return where, tgExpr, args, nil
+}
+
+// streamItems writes the FeatureCollection incrementally from a server-side
+// cursor: bounded memory for any result size; keyset next link for paging.
+func streamItems(w http.ResponseWriter, r *http.Request) {
+	tbl, srid, ok := collectionMeta(r.Context(), r.PathValue("cid"))
 	if !ok {
 		httpErr(w, 404, "collection not found")
 		return
 	}
-	limit := 100
-	if l := r.URL.Query().Get("limit"); l != "" {
-		if n, e := strconv.Atoi(l); e == nil && n > 0 && n <= 10000 {
+	q := r.URL.Query()
+	limit := defaultLimit
+	if l := q.Get("limit"); l != "" {
+		if n, e := strconv.Atoi(l); e == nil && n > 0 {
 			limit = n
 		}
 	}
-	q := `SELECT jsonb_build_object(
-	    'type','FeatureCollection',
-	    'numberReturned', count(*),
-	    'features', coalesce(jsonb_agg(jsonb_build_object(
-	        'type','Feature',
-	        'id', id::text,
-	        'properties', jsonb_build_object('mmsi',mmsi,'name',name),
-	        'temporalGeometry', asMFJSON(trip)::jsonb
-	    )), '[]'::jsonb)
-	  )::text
-	  FROM (SELECT id,mmsi,name,trip FROM ` + pgxIdent(tbl) + ` ORDER BY id LIMIT $1) s`
-	var body string
-	if err := pool.QueryRow(r.Context(), q, limit).Scan(&body); err != nil {
+	if limit > maxLimit {
+		limit = maxLimit
+	}
+	where, tgExpr, args, ferr := itemFilters(tbl, srid, q)
+	if ferr != nil {
+		httpErr(w, 400, ferr.Error())
+		return
+	}
+	args = append(args, limit)
+	sql := "SELECT id, jsonb_build_object('type','Feature','id',id::text," +
+		"'properties',jsonb_build_object('mmsi',mmsi,'name',name)," +
+		"'temporalGeometry', asMFJSON(" + tgExpr + ")::jsonb)::text " +
+		"FROM " + ident(tbl) + " " + where +
+		" ORDER BY id LIMIT $" + itoa(len(args))
+	rows, err := pool.Query(r.Context(), sql, args...)
+	if err != nil {
 		httpErr(w, 500, err.Error())
 		return
 	}
-	writeJSONString(w, 200, ogcifyResponse(body))
+	defer rows.Close()
+
+	w.Header().Set("Content-Type", "application/json")
+	bw := bufio.NewWriterSize(w, 64*1024)
+	defer bw.Flush()
+	bw.WriteString(`{"type":"FeatureCollection","features":[`)
+	var lastID int64
+	n := 0
+	for rows.Next() {
+		var id int64
+		var feat string
+		if err := rows.Scan(&id, &feat); err != nil {
+			break
+		}
+		if n > 0 {
+			bw.WriteByte(',')
+		}
+		bw.WriteString(ogcify(feat))
+		lastID = id
+		n++
+		if n%256 == 0 {
+			bw.Flush()
+		}
+	}
+	bw.WriteString(`],"numberReturned":` + itoa(n))
+	if n == limit { // a full page -> there may be more; emit a keyset next link
+		nq := cloneQuery(q)
+		nq.Set("after", strconv.FormatInt(lastID, 10))
+		nq.Set("limit", itoa(limit))
+		bw.WriteString(`,"links":[{"rel":"next","href":"/collections/` + r.PathValue("cid") + `/items?` + nq.Encode() + `"}]`)
+	}
+	bw.WriteString(`}`)
 }
 
 func getItem(w http.ResponseWriter, r *http.Request) {
-	tbl, ok := collectionTable(r.Context(), r.PathValue("cid"))
+	tbl, _, ok := collectionMeta(r.Context(), r.PathValue("cid"))
 	if !ok {
 		httpErr(w, 404, "collection not found")
 		return
@@ -212,24 +301,64 @@ func getItem(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, 400, "invalid feature id")
 		return
 	}
-	q := `SELECT jsonb_build_object(
-	    'type','Feature','id',id::text,
-	    'properties', jsonb_build_object('mmsi',mmsi,'name',name),
-	    'temporalGeometry', asMFJSON(trip)::jsonb
-	  )::text FROM ` + pgxIdent(tbl) + ` WHERE id=$1`
 	var body string
-	if err := pool.QueryRow(r.Context(), q, fid).Scan(&body); err != nil {
+	if err := pool.QueryRow(r.Context(), "SELECT jsonb_build_object('type','Feature','id',id::text,"+
+		"'properties',jsonb_build_object('mmsi',mmsi,'name',name),'temporalGeometry',asMFJSON(trip)::jsonb)::text "+
+		"FROM "+ident(tbl)+" WHERE id=$1", fid).Scan(&body); err != nil {
 		httpErr(w, 404, "feature not found")
 		return
 	}
-	writeJSONString(w, 200, ogcifyResponse(body))
+	writeRaw(w, 200, ogcify(body))
 }
 
-// postItem — the write path. The OGC temporalGeometry is parsed entirely by
-// MobilityDB (tgeompointFromMFJSON); Go only maps the interpolation enum and
-// sets the SRID from the Feature crs. No MEOS in the tier.
+// exportNDJSON streams one Feature per line (application/x-ndjson) from a
+// cursor — the lakehouse bulk feed: DuckDB read_json_auto / Spark / pandas
+// ingest it directly, and it converts to Parquet/Arrow in the lake.
+func exportNDJSON(w http.ResponseWriter, r *http.Request) {
+	tbl, srid, ok := collectionMeta(r.Context(), r.PathValue("cid"))
+	if !ok {
+		httpErr(w, 404, "collection not found")
+		return
+	}
+	where, tgExpr, args, ferr := itemFilters(tbl, srid, r.URL.Query())
+	if ferr != nil {
+		httpErr(w, 400, ferr.Error())
+		return
+	}
+	tail := ""
+	if exportBatch > 0 {
+		args = append(args, exportBatch)
+		tail = " LIMIT $" + itoa(len(args))
+	}
+	sql := "SELECT jsonb_build_object('type','Feature','id',id::text," +
+		"'properties',jsonb_build_object('mmsi',mmsi,'name',name)," +
+		"'temporalGeometry', asMFJSON(" + tgExpr + ")::jsonb)::text " +
+		"FROM " + ident(tbl) + " " + where + " ORDER BY id" + tail
+	rows, err := pool.Query(r.Context(), sql, args...)
+	if err != nil {
+		httpErr(w, 500, err.Error())
+		return
+	}
+	defer rows.Close()
+	w.Header().Set("Content-Type", "application/x-ndjson")
+	bw := bufio.NewWriterSize(w, 64*1024)
+	defer bw.Flush()
+	n := 0
+	for rows.Next() {
+		var feat string
+		if err := rows.Scan(&feat); err != nil {
+			break
+		}
+		bw.WriteString(ogcify(feat))
+		bw.WriteByte('\n')
+		if n++; n%256 == 0 {
+			bw.Flush()
+		}
+	}
+}
+
 func postItem(w http.ResponseWriter, r *http.Request) {
-	tbl, ok := collectionTable(r.Context(), r.PathValue("cid"))
+	tbl, _, ok := collectionMeta(r.Context(), r.PathValue("cid"))
 	if !ok {
 		httpErr(w, 404, "collection not found")
 		return
@@ -250,27 +379,39 @@ func postItem(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	tgBytes, _ := json.Marshal(feat.TG)
-	srid := epsgFromCRS(feat.CRS, 25832)
-	id, _ := feat.ID.Int64()
-	var name string
-	if feat.Properties != nil {
-		if n, ok := feat.Properties["name"].(string); ok {
-			name = n
-		}
+	srid := 25832
+	if m := epsgURN.FindStringSubmatch(string(feat.CRS)); m != nil {
+		srid, _ = strconv.Atoi(m[1])
 	}
-	_, err := pool.Exec(r.Context(),
-		`INSERT INTO `+pgxIdent(tbl)+`(id,mmsi,name,trip)
-		 VALUES ($1, $2, $3, setSRID(tgeompointFromMFJSON($4), $5))`,
-		id, nil, name, string(tgBytes), srid)
-	if err != nil {
+	id, _ := feat.ID.Int64()
+	name, _ := feat.Properties["name"].(string)
+	if _, err := pool.Exec(r.Context(),
+		"INSERT INTO "+ident(tbl)+"(id,mmsi,name,trip) VALUES ($1,$2,$3, setSRID(tgeompointFromMFJSON($4), $5))",
+		id, nil, name, string(tgBytes), srid); err != nil {
 		httpErr(w, 400, "ingest failed: "+err.Error())
 		return
 	}
 	writeJSON(w, 201, map[string]any{"message": "created", "id": strconv.FormatInt(id, 10)})
 }
 
-// pgxIdent quotes a validated identifier (the collection id is registry-checked
-// before reaching here, so this is defense-in-depth, not the primary guard).
-func pgxIdent(s string) string {
-	return `"` + strings.ReplaceAll(s, `"`, `""`) + `"`
+// small helpers
+func itoa(n int) string { return strconv.Itoa(n) }
+func first(q map[string][]string, k string) string {
+	if v := q[k]; len(v) > 0 {
+		return v[0]
+	}
+	return ""
+}
+func splitInterval(s string) (string, string, bool) {
+	if i := strings.IndexByte(s, '/'); i > 0 {
+		return s[:i], s[i+1:], true
+	}
+	return "", "", false
+}
+func cloneQuery(q map[string][]string) url.Values {
+	v := url.Values{}
+	for k, vs := range q {
+		v[k] = append([]string(nil), vs...)
+	}
+	return v
 }

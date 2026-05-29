@@ -92,6 +92,8 @@ func main() {
 	mux.HandleFunc("GET /collections/{cid}/items/{fid}", getItem)
 	mux.HandleFunc("POST /collections/{cid}/items", postItem)
 	mux.HandleFunc("GET /collections/{cid}/export", export) // lakehouse bulk feed (NDJSON | Parquet)
+	// extension (not in conformsTo): bulk ingest of a real-time fleet feed
+	mux.HandleFunc("POST /collections/{cid}/bulk", bulkIngest)
 	// OGC API – Moving Features sub-resources of a moving feature:
 	mux.HandleFunc("GET /collections/{cid}/items/{fid}/tgsequence", tgSequence)
 	mux.HandleFunc("GET /collections/{cid}/items/{fid}/tgsequence/{tgid}/{qtype}", tgSequenceQuery)
@@ -614,6 +616,9 @@ func apiDoc(w http.ResponseWriter, r *http.Request) {
 			"/collections/{cid}/items/{fid}/tproperties":               get("Derived temporal properties of a feature"),
 			"/collections/{cid}/items/{fid}/tproperties/{pname}":       get("A derived temporal property (velocity | distance | heading)"),
 			"/collections/{cid}/export":                                get("Bulk lakehouse export: NDJSON, or ?format=parquet (WKB + bbox/time sidecar)"),
+			"/collections/{cid}/bulk": map[string]any{"post": map[string]any{
+				"summary":   "Bulk ingest (extension): a batch of (vehicleId, position, time) observations as GeoJSON Points or GeoParquet, optionally gzip/deflate/br/zstd-compressed; each is appended as one instant",
+				"responses": map[string]any{"201": map[string]any{"description": "Created"}}}},
 		},
 	}
 	w.Header().Set("Content-Type", "application/vnd.oai.openapi+json;version=3.0")

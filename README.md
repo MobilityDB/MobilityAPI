@@ -34,8 +34,9 @@ The tier translates between OGC API – Moving Features requests/responses and M
 | GET · POST · PUT · DELETE | `/collections` · `/collections/{cid}` | List, register, replace and delete collections (spatial + temporal extent) |
 | GET | `/collections/{cid}/items` | Moving features, streamed and keyset-paged, with `bbox` / `datetime` / `subtrajectory` filters |
 | GET · POST · PUT · DELETE | `/collections/{cid}/items/{fid}` | Read, replace and delete a moving feature; `POST` on the collection creates one from a MovingFeatureJSON body |
-| GET · POST · DELETE | `/collections/{cid}/items/{fid}/tgsequence` | The temporal geometry (MF-JSON); append a temporally-disjoint sub-trajectory |
-| GET | `/collections/{cid}/items/{fid}/tgsequence/{tgid}/{distance\|velocity}` | Derived kinematics; `acceleration` returns 501 for the piecewise-constant motion model |
+| GET · POST | `/collections/{cid}/items/{fid}/tgsequence` | Temporal geometry sequence (`TemporalGeometrySequence`); members are the trajectory's gap-separated sequences, each with a 1-based `id`; `POST` appends a temporally-disjoint member |
+| DELETE | `/collections/{cid}/items/{fid}/tgsequence/{tgid}` | Delete a temporal primitive geometry (member sequence) by `id` |
+| GET | `/collections/{cid}/items/{fid}/tgsequence/{tgid}/{distance\|velocity}` | Derived kinematics on member `{tgid}`; `acceleration` returns 501 for the piecewise-constant motion model |
 | GET · POST · DELETE | `/collections/{cid}/items/{fid}/tproperties` · `/.../{pname}` | User-supplied, stored temporal properties (`TReal` · `TInt` · `TText` · `TBool`), held as native MobilityDB temporal values |
 | GET | `/collections/{cid}/export` | Lakehouse feed: NDJSON, or `?format=parquet` |
 | POST | `/collections/{cid}/bulk` | Bulk ingest of a fleet feed: GeoJSON / GeoParquet observations, each appended as one instant |

@@ -722,8 +722,19 @@ func tgSequence(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, 400, cerr.Error())
 		return
 	}
+	args = append(args, r.URL.Path)
+	selfP := "$" + itoa(len(args))
+	// The tgeompoint is a sequence set; each member sequence is one OGC temporal
+	// primitive geometry, addressed by its 1-based index (sequenceN). Emit the
+	// TemporalGeometrySequence envelope so the {tGeometryId} values are discoverable.
+	sql := "WITH g AS (SELECT " + expr + " AS trip FROM " + ident(tbl) + " WHERE id=$1) " +
+		"SELECT jsonb_build_object('type','TemporalGeometrySequence'," +
+		"'geometrySequence', coalesce((SELECT jsonb_agg(" +
+		"(jsonb_build_object('id', n) || asMFJSON(sequenceN(g.trip, n))::jsonb) ORDER BY n) " +
+		"FROM generate_series(1, numSequences(g.trip)) AS n), '[]'::jsonb)," +
+		"'links', jsonb_build_array(jsonb_build_object('rel','self','href'," + selfP + "::text)))::text FROM g"
 	var body *string
-	err = pool.QueryRow(r.Context(), "SELECT asMFJSON("+expr+")::text FROM "+ident(tbl)+" WHERE id=$1", args...).Scan(&body)
+	err = pool.QueryRow(r.Context(), sql, args...).Scan(&body)
 	if errors.Is(err, pgx.ErrNoRows) {
 		httpErr(w, 404, "feature not found")
 		return
@@ -758,7 +769,34 @@ func tgSequenceQuery(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, 404, "collection not found")
 		return
 	}
-	writeTemporalProperty(w, r, tbl, q, tProps[q])
+	fid, err := strconv.Atoi(r.PathValue("fid"))
+	if err != nil {
+		httpErr(w, 400, "invalid feature id")
+		return
+	}
+	tg, err := strconv.Atoi(r.PathValue("tgid"))
+	if err != nil || tg < 1 {
+		httpErr(w, 400, "invalid temporal geometry id (1-based index into the sequence)")
+		return
+	}
+	var nseq *int
+	err = pool.QueryRow(r.Context(), "SELECT numSequences(trip) FROM "+ident(tbl)+" WHERE id=$1", fid).Scan(&nseq)
+	if errors.Is(err, pgx.ErrNoRows) {
+		httpErr(w, 404, "feature not found")
+		return
+	}
+	if err != nil {
+		httpErr(w, 400, err.Error())
+		return
+	}
+	if nseq == nil || tg > *nseq {
+		httpErr(w, 404, "no temporal geometry #"+itoa(tg)+" for this feature")
+		return
+	}
+	// Address the temporal primitive geometry by its sequence index.
+	spec := tProps[q]
+	spec.expr = strings.Replace(spec.expr, "trip", "sequenceN(trip, "+itoa(tg)+")", 1)
+	writeTemporalProperty(w, r, tbl, q, spec)
 }
 
 // getTProperty serves one stored temporal property as an OGC temporalProperty,
@@ -958,11 +996,13 @@ func apiDoc(w http.ResponseWriter, r *http.Request) {
 				"delete": op("Delete a moving feature"),
 			},
 			"/collections/{cid}/items/{fid}/tgsequence": map[string]any{
-				"get":    op("Temporal geometry sequence (MF-JSON)"),
-				"post":   op("Append a temporally-disjoint sub-trajectory"),
-				"delete": op("501 — the feature carries a single temporal geometry; delete the feature instead"),
+				"get":  op("Temporal geometry sequence (TemporalGeometrySequence; members addressable by their 1-based id)"),
+				"post": op("Append a temporally-disjoint member sequence"),
 			},
-			"/collections/{cid}/items/{fid}/tgsequence/{tgid}/{qtype}": get("Temporal geometry derived query: distance | velocity (acceleration → 501, not derivable for this motion model)"),
+			"/collections/{cid}/items/{fid}/tgsequence/{tgid}": map[string]any{
+				"delete": op("Delete a temporal primitive geometry (member sequence) by id"),
+			},
+			"/collections/{cid}/items/{fid}/tgsequence/{tgid}/{qtype}": get("Derived query on a member geometry: distance | velocity (acceleration → 501, not derivable for this motion model)"),
 			"/collections/{cid}/items/{fid}/tproperties": map[string]any{
 				"get":  op("Stored temporal properties of a feature"),
 				"post": op("Add one or more temporal properties (TReal | TInt | TText | TBool) to a feature"),
@@ -1511,8 +1551,52 @@ func deleteTProperty(w http.ResponseWriter, r *http.Request) {
 }
 
 // deleteTgSequence: the feature carries a single inseparable temporal geometry.
+// deleteTgSequence removes one temporal primitive geometry (a member sequence)
+// from the feature's tgeompoint sequence set, addressed by its 1-based index.
 func deleteTgSequence(w http.ResponseWriter, r *http.Request) {
-	httpErr(w, 501, "the moving feature has a single temporal geometry; delete the feature (DELETE .../items/{fid}) rather than an individual temporal primitive")
+	tbl, _, ok := collectionMeta(r.Context(), r.PathValue("cid"))
+	if !ok {
+		httpErr(w, 404, "collection not found")
+		return
+	}
+	fid, err := strconv.Atoi(r.PathValue("fid"))
+	if err != nil {
+		httpErr(w, 400, "invalid feature id")
+		return
+	}
+	tg, err := strconv.Atoi(r.PathValue("tgid"))
+	if err != nil || tg < 1 {
+		httpErr(w, 400, "invalid temporal geometry id (1-based index into the sequence)")
+		return
+	}
+	var nseq *int
+	err = pool.QueryRow(r.Context(), "SELECT numSequences(trip) FROM "+ident(tbl)+" WHERE id=$1", fid).Scan(&nseq)
+	if errors.Is(err, pgx.ErrNoRows) {
+		httpErr(w, 404, "feature not found")
+		return
+	}
+	if err != nil {
+		httpErr(w, 400, err.Error())
+		return
+	}
+	if nseq == nil || tg > *nseq {
+		httpErr(w, 404, "no temporal geometry #"+itoa(tg)+" for this feature")
+		return
+	}
+	if *nseq == 1 {
+		httpErr(w, 409, "the feature has a single temporal geometry; delete the feature (DELETE .../items/{fid}) to remove it")
+		return
+	}
+	// Rebuild the sequence set from the kept member sequences (deleteTime on a
+	// tgeompoint is avoided — it crashes the backend on a sequence set).
+	_, err = pool.Exec(r.Context(),
+		"UPDATE "+ident(tbl)+" SET trip = (SELECT merge(seq) FROM unnest(sequences(trip)) "+
+			"WITH ORDINALITY AS u(seq, ord) WHERE ord <> $2) WHERE id = $1", fid, tg)
+	if err != nil {
+		httpErr(w, 400, "delete failed: "+err.Error())
+		return
+	}
+	w.WriteHeader(204)
 }
 
 // small helpers

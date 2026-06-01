@@ -36,7 +36,7 @@ of Part 1: Core.
 | `DELETE /collections/{c}/items/{f}` | ● | ● | ● |
 | `GET …/{f}/tgsequence` | ● | ● | ● |
 | `POST …/{f}/tgsequence` | ● | ● | ● |
-| `DELETE …/tgsequence/{tg}` | ● | ● | ● ¹ |
+| `DELETE …/tgsequence/{tg}` | ● | ● | ● |
 | `GET …/tgsequence/{tg}/distance` | ● | ● | ● |
 | `GET …/tgsequence/{tg}/velocity` | ● | ● | ● |
 | `GET …/tgsequence/{tg}/acceleration` | ● | ● | 501 ² |
@@ -50,8 +50,12 @@ Beyond the standard, MobilityAPI adds `GET /health`, `GET …/{f}` exposing the
 single-feature GeoJSON geometry, `PUT …/items/{f}`, and a lakehouse bulk feed
 `GET …/{c}/export` (NDJSON, or `?format=parquet`). These sit outside `conformsTo`.
 
-¹ A feature carries a single temporal geometry, so `DELETE …/tgsequence/{tg}`
-returns 501 with the guidance to delete the feature instead.
+The `{tGeometryId}` is the **1-based index of a member sequence** within the
+feature's `tgeompoint` sequence set (`sequenceN` / `numSequences`): the temporal
+geometry sequence is enumerated as gap-separated temporal primitive geometries,
+each with its own id, so `GET`, the derived queries and `DELETE` all address a
+specific member. `DELETE …/tgsequence/{tg}` removes that member (409 when it is
+the feature's only one).
 
 ² Acceleration returns 501. With linearly interpolated position the speed is
 piecewise-constant, so its derivative is zero within each segment and undefined

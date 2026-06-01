@@ -1587,8 +1587,10 @@ func deleteTgSequence(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, 409, "the feature has a single temporal geometry; delete the feature (DELETE .../items/{fid}) to remove it")
 		return
 	}
-	// Rebuild the sequence set from the kept member sequences (deleteTime on a
-	// tgeompoint is avoided — it crashes the backend on a sequence set).
+	// Rebuild the sequence set from the kept member sequences. deleteTime is not
+	// used here: its gap-fill semantics reconnect the surviving fragments into a
+	// single sequence, whereas deleting a temporal primitive geometry must leave
+	// the other members as distinct sequences.
 	_, err = pool.Exec(r.Context(),
 		"UPDATE "+ident(tbl)+" SET trip = (SELECT merge(seq) FROM unnest(sequences(trip)) "+
 			"WITH ORDINALITY AS u(seq, ord) WHERE ord <> $2) WHERE id = $1", fid, tg)

@@ -97,4 +97,29 @@ CREATE INDEX ships_trip_gist ON ships USING gist (trip);   -- bbox/datetime filt
 DROP TABLE AISInput, AISClean;
 ANALYZE ships;
 
+-- --- 6. Demo temporal properties for the first feature ----------------------
+-- User-supplied, time-varying attributes the tier serves at /…/tproperties,
+-- stored as native MobilityDB temporal values in the same mf_tproperty table
+-- the Go tier writes. Each is a linear tfloat over the feature's own window, so
+-- the values track whatever vessel sorts first in the loaded dataset.
+CREATE TABLE IF NOT EXISTS mf_tproperty (
+  cid text NOT NULL, fid bigint NOT NULL, name text NOT NULL,
+  ptype text NOT NULL, uom text, description text,
+  vfloat tfloat, vint tint, vtext ttext, vbool tbool,
+  PRIMARY KEY (cid, fid, name)
+);
+INSERT INTO mf_tproperty (cid, fid, name, ptype, uom, description, vfloat)
+SELECT 'ships', 1, p.name, 'TReal', p.uom, p.description,
+       ('[' || p.v0 || '@' || startTimestamp(s.trip) || ', '
+            || p.v1 || '@' || endTimestamp(s.trip)   || ']')::tfloat
+FROM ships s,
+     (VALUES ('fuel',       'L',   'Fuel remaining over the voyage', 22.78, 41.5),
+             ('cargo_temp', 'Cel', 'Reefer cargo temperature',        4.2,   4.0),
+             ('load',       't',   'Cargo load',                    1200.0, 1180.0))
+       AS p(name, uom, description, v0, v1)
+WHERE s.id = 1
+ON CONFLICT (cid, fid, name) DO UPDATE
+  SET vfloat = EXCLUDED.vfloat, uom = EXCLUDED.uom,
+      description = EXCLUDED.description;
+
 SELECT count(*) AS trajectories, count(DISTINCT mmsi) AS vessels FROM ships;

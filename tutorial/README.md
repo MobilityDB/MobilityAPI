@@ -11,6 +11,15 @@ notebook.
   (the `mfapi_demo` database). Start it with `./mfapi-go` (see the repo README).
 - Python packages: `requests matplotlib numpy pyproj Pillow`.
 
+Build the `mfapi_demo` database from a day of [Danish Maritime Authority AIS
+data](https://web.ais.dk/aisdata/) with `setup/load_ships.sql`:
+
+```
+createdb mfapi_demo
+psql -d mfapi_demo -v data_csv_path=/path/to/aisdk-2026-02-26.csv \
+     -f tutorial/setup/load_ships.sql
+```
+
 The basemap is fetched as OpenStreetMap XYZ tiles (cached under `/tmp/mfapi_tiles`), so
 geopandas/contextily are not required.
 

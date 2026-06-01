@@ -106,10 +106,10 @@ func main() {
 	mux.HandleFunc("PUT /collections/{cid}/items/{fid}", putItem)
 	mux.HandleFunc("DELETE /collections/{cid}/items/{fid}", deleteItem)
 	mux.HandleFunc("POST /collections/{cid}/items/{fid}/tgsequence", postTgSequence)
-	// derived properties are computed from the geometry, not independently stored
-	mux.HandleFunc("POST /collections/{cid}/items/{fid}/tproperties", derivedReadOnly)
-	mux.HandleFunc("POST /collections/{cid}/items/{fid}/tproperties/{pname}", derivedReadOnly)
-	mux.HandleFunc("DELETE /collections/{cid}/items/{fid}/tproperties/{pname}", derivedReadOnly)
+	// temporal properties are user-supplied, stored, time-varying attributes
+	mux.HandleFunc("POST /collections/{cid}/items/{fid}/tproperties", postTProperties)
+	mux.HandleFunc("POST /collections/{cid}/items/{fid}/tproperties/{pname}", postTPropertyValues)
+	mux.HandleFunc("DELETE /collections/{cid}/items/{fid}/tproperties/{pname}", deleteTProperty)
 	mux.HandleFunc("DELETE /collections/{cid}/items/{fid}/tgsequence/{tgid}", deleteTgSequence)
 
 	addr := ":" + strconv.Itoa(envInt("MFAPI_PORT", 8088))
@@ -412,6 +412,7 @@ func deleteCollection(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, 500, err.Error())
 		return
 	}
+	purgeTProps(r.Context(), "cid=$1", cid)
 	w.WriteHeader(204)
 }
 
@@ -585,11 +586,99 @@ type propSpec struct{ expr, uom, desc string }
 
 var tProps = map[string]propSpec{
 	"velocity": {"speed(trip)", "m/s", "Speed over ground (velocity magnitude), a piecewise-constant function of the trajectory."},
-	"speed":    {"speed(trip)", "m/s", "Speed over ground, a piecewise-constant function of the trajectory."},
 	"distance": {"cumulativeLength(trip)", "m", "Cumulative distance travelled along the trajectory."},
-	"heading":  {"azimuth(trip)", "rad", "Heading (azimuth) over ground in radians, a piecewise-constant function of the trajectory."},
 }
-var tPropList = []string{"velocity", "distance", "heading"}
+
+// tType describes how a scalar temporal property is carried: mf is the
+// MobilityDB MF-JSON moving-type token, col its storage column, cast its type,
+// ogc the canonical OGC type token, and defInterp the interpolation MobilityDB
+// assumes when the body omits one.
+type tType struct{ mf, col, cast, ogc, defInterp string }
+
+// tPropType resolves an OGC temporal property type token to the four scalar
+// temporal types MobilityDB carries as time-varying attribute values.
+func tPropType(t string) (tType, bool) {
+	switch strings.ToLower(strings.TrimSpace(t)) {
+	case "", "treal", "tfloat", "measure", "real", "float", "double", "number":
+		return tType{"MovingFloat", "vfloat", "tfloat", "TReal", "Linear"}, true
+	case "tint", "tinteger", "integer", "int":
+		return tType{"MovingInteger", "vint", "tint", "TInt", "Step"}, true
+	case "ttext", "tstring", "text", "string":
+		return tType{"MovingText", "vtext", "ttext", "TText", "Discrete"}, true
+	case "tbool", "tboolean", "boolean", "bool":
+		return tType{"MovingBoolean", "vbool", "tbool", "TBool", "Step"}, true
+	}
+	return tType{}, false
+}
+
+// orTrue returns the JSON boolean v, or true when v is absent — MF-JSON sequence
+// bounds default to inclusive.
+func orTrue(v any) bool {
+	if b, ok := v.(bool); ok {
+		return b
+	}
+	return true
+}
+
+// tPropMFJSON renders a MobilityDB MF-JSON document for one temporal property
+// from its OGC body: either a flat {datetimes, values, interpolation} object or
+// a valueSequence array (a sequence set when it holds more than one segment).
+// The interpolation token is mapped from OGC to MobilityDB and defaults per type.
+func tPropMFJSON(mfType, defInterp string, body map[string]any) (string, error) {
+	mapInterp := func(v any) string {
+		s, _ := v.(string)
+		if s == "" {
+			return defInterp
+		}
+		if m, ok := ogc2mdbInterp[s]; ok {
+			return m
+		}
+		return s
+	}
+	if vs, ok := body["valueSequence"].([]any); ok && len(vs) > 0 {
+		if len(vs) == 1 {
+			seq, _ := vs[0].(map[string]any)
+			return tPropMFJSON(mfType, defInterp, seq)
+		}
+		seqs := make([]any, 0, len(vs))
+		interp := ""
+		for _, s := range vs {
+			m, _ := s.(map[string]any)
+			if interp == "" {
+				interp = mapInterp(m["interpolation"])
+			}
+			seqs = append(seqs, map[string]any{
+				"values": m["values"], "datetimes": m["datetimes"],
+				"lower_inc": orTrue(m["lower_inc"]), "upper_inc": orTrue(m["upper_inc"]),
+			})
+		}
+		b, _ := json.Marshal(map[string]any{"type": mfType, "sequences": seqs, "interpolation": interp})
+		return string(b), nil
+	}
+	if body["datetimes"] == nil || body["values"] == nil {
+		return "", errors.New("temporal property requires datetimes and values (or a valueSequence)")
+	}
+	b, _ := json.Marshal(map[string]any{
+		"type": mfType, "datetimes": body["datetimes"], "values": body["values"],
+		"interpolation": mapInterp(body["interpolation"]),
+		"lower_inc":     orTrue(body["lower_inc"]), "upper_inc": orTrue(body["upper_inc"]),
+	})
+	return string(b), nil
+}
+
+// ensureTPropTable creates the shared temporal-property store on first write: a
+// row per (collection, feature, property) holding the value as a native
+// MobilityDB temporal value in the column matching its type.
+func ensureTPropTable(ctx context.Context, q interface {
+	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
+}) error {
+	_, err := q.Exec(ctx, `CREATE TABLE IF NOT EXISTS mf_tproperty (
+	  cid text NOT NULL, fid bigint NOT NULL, name text NOT NULL,
+	  ptype text NOT NULL, uom text, description text,
+	  vfloat tfloat, vint tint, vtext ttext, vbool tbool,
+	  PRIMARY KEY (cid, fid, name))`)
+	return err
+}
 
 // clip wraps a temporal expression with atTime for the OGC leaf (instant set)
 // or datetime (interval) selector, binding the selector value as a parameter.
@@ -670,25 +759,82 @@ func tgSequenceQuery(w http.ResponseWriter, r *http.Request) {
 	writeTemporalProperty(w, r, tbl, q, tProps[q])
 }
 
-// getTProperty serves one derived temporal property as an OGC temporalProperty.
+// getTProperty serves one stored temporal property as an OGC temporalProperty,
+// optionally clipped to a datetime interval or to leaf instants.
 func getTProperty(w http.ResponseWriter, r *http.Request) {
-	name := strings.ToLower(r.PathValue("pname"))
-	spec, ok := tProps[name]
-	if !ok {
-		httpErr(w, 404, "unknown temporal property: "+name)
-		return
-	}
-	tbl, _, ok := collectionMeta(r.Context(), r.PathValue("cid"))
-	if !ok {
+	cid := r.PathValue("cid")
+	name := r.PathValue("pname")
+	if _, _, ok := collectionMeta(r.Context(), cid); !ok {
 		httpErr(w, 404, "collection not found")
 		return
 	}
-	writeTemporalProperty(w, r, tbl, name, spec)
+	fid, err := strconv.Atoi(r.PathValue("fid"))
+	if err != nil {
+		httpErr(w, 400, "invalid feature id")
+		return
+	}
+	var ptype, uom, desc string
+	err = pool.QueryRow(r.Context(),
+		"SELECT ptype, coalesce(uom,''), coalesce(description,'') FROM mf_tproperty WHERE cid=$1 AND fid=$2 AND name=$3",
+		cid, fid, name).Scan(&ptype, &uom, &desc)
+	if errors.Is(err, pgx.ErrNoRows) {
+		httpErr(w, 404, "unknown temporal property: "+name)
+		return
+	}
+	if err != nil {
+		httpErr(w, 500, err.Error())
+		return
+	}
+	tt, ok := tPropType(ptype)
+	if !ok {
+		httpErr(w, 500, "stored property has an unknown type: "+ptype)
+		return
+	}
+	expr, args, cerr := clip(tt.col, r.URL.Query(), []any{cid, fid, name, uom, desc})
+	if cerr != nil {
+		httpErr(w, 400, cerr.Error())
+		return
+	}
+	args = append(args, r.URL.Path)
+	selfP := "$" + itoa(len(args))
+	sql := "WITH base AS (SELECT asMFJSON(" + expr + ")::jsonb AS j FROM mf_tproperty WHERE cid=$1 AND fid=$2 AND name=$3) " +
+		tPropertyReshape(tt.ogc, "$3", "$4", "$5", selfP)
+	var body *string
+	if err := pool.QueryRow(r.Context(), sql, args...).Scan(&body); err != nil {
+		httpErr(w, 400, err.Error())
+		return
+	}
+	if body == nil {
+		httpErr(w, 404, "no values for the requested selector")
+		return
+	}
+	writeRaw(w, 200, ogcify(*body))
 }
 
-// writeTemporalProperty builds the OGC temporalProperty object in SQL: the
-// derived tfloat is serialised with asMFJSON and reshaped into a valueSequence,
-// carrying each segment's own interpolation verbatim from MobilityDB.
+// tPropertyReshape is the SELECT that turns a base CTE exposing j = the value's
+// asMFJSON into an OGC temporalProperty. asMFJSON emits continuous values under
+// "sequences" and discrete values (instants / leaf selection) as a single
+// top-level values/datetimes object; both are reshaped into the OGC
+// valueSequence, keeping each segment's interpolation verbatim. typ, np, fp, dp
+// and sp are the type token and the $-placeholders for name, form, description
+// and the self href.
+func tPropertyReshape(typ, np, fp, dp, sp string) string {
+	return "SELECT jsonb_build_object('name'," + np + "::text,'type','" + typ + "','form'," + fp + "::text,'description'," + dp + "::text," +
+		"'valueSequence', CASE" +
+		" WHEN j ? 'sequences' THEN coalesce((SELECT jsonb_agg(jsonb_build_object(" +
+		"'datetimes',seq->'datetimes','values',seq->'values','interpolation',j->>'interpolation'," +
+		"'lower_inc',seq->'lower_inc','upper_inc',seq->'upper_inc') ORDER BY ord) " +
+		"FROM jsonb_array_elements(j->'sequences') WITH ORDINALITY AS t(seq,ord)),'[]'::jsonb)" +
+		" WHEN j ? 'datetimes' THEN jsonb_build_array(jsonb_build_object(" +
+		"'datetimes',j->'datetimes','values',j->'values','interpolation',j->>'interpolation'," +
+		"'lower_inc',j->'lower_inc','upper_inc',j->'upper_inc'))" +
+		" ELSE '[]'::jsonb END," +
+		"'links',jsonb_build_array(jsonb_build_object('rel','self','href'," + sp + "::text)))::text FROM base"
+}
+
+// writeTemporalProperty builds the OGC temporalProperty object in SQL for a
+// derived measure: the tfloat is serialised with asMFJSON and reshaped into a
+// valueSequence, carrying each segment's own interpolation verbatim from MobilityDB.
 func writeTemporalProperty(w http.ResponseWriter, r *http.Request, tbl, name string, spec propSpec) {
 	fid, err := strconv.Atoi(r.PathValue("fid"))
 	if err != nil {
@@ -702,21 +848,8 @@ func writeTemporalProperty(w http.ResponseWriter, r *http.Request, tbl, name str
 	}
 	args = append(args, r.URL.Path)
 	selfP := "$" + itoa(len(args))
-	// asMFJSON emits continuous values under "sequences" and discrete values
-	// (instants / leaf selection) as a single top-level values/datetimes object;
-	// reshape both into the OGC valueSequence, keeping the true interpolation.
 	sql := "WITH base AS (SELECT asMFJSON(" + expr + ")::jsonb AS j FROM " + ident(tbl) + " WHERE id=$1) " +
-		"SELECT jsonb_build_object('name',$2::text,'type','TReal','form',$3::text,'description',$4::text," +
-		"'valueSequence', CASE" +
-		" WHEN j ? 'sequences' THEN coalesce((SELECT jsonb_agg(jsonb_build_object(" +
-		"'datetimes',seq->'datetimes','values',seq->'values','interpolation',j->>'interpolation'," +
-		"'lower_inc',seq->'lower_inc','upper_inc',seq->'upper_inc') ORDER BY ord) " +
-		"FROM jsonb_array_elements(j->'sequences') WITH ORDINALITY AS t(seq,ord)),'[]'::jsonb)" +
-		" WHEN j ? 'datetimes' THEN jsonb_build_array(jsonb_build_object(" +
-		"'datetimes',j->'datetimes','values',j->'values','interpolation',j->>'interpolation'," +
-		"'lower_inc',j->'lower_inc','upper_inc',j->'upper_inc'))" +
-		" ELSE '[]'::jsonb END," +
-		"'links',jsonb_build_array(jsonb_build_object('rel','self','href'," + selfP + "::text)))::text FROM base"
+		tPropertyReshape("TReal", "$2", "$3", "$4", selfP)
 	var body string
 	err = pool.QueryRow(r.Context(), sql, args...).Scan(&body)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -730,9 +863,10 @@ func writeTemporalProperty(w http.ResponseWriter, r *http.Request, tbl, name str
 	writeRaw(w, 200, ogcify(body))
 }
 
-// listTProperties lists the derived temporal properties available for a feature.
+// listTProperties lists the stored temporal properties of a feature.
 func listTProperties(w http.ResponseWriter, r *http.Request) {
-	tbl, _, ok := collectionMeta(r.Context(), r.PathValue("cid"))
+	cid := r.PathValue("cid")
+	tbl, _, ok := collectionMeta(r.Context(), cid)
 	if !ok {
 		httpErr(w, 404, "collection not found")
 		return
@@ -748,11 +882,26 @@ func listTProperties(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	base := r.URL.Path
-	list := make([]map[string]any, 0, len(tPropList))
-	for _, n := range tPropList {
-		s := tProps[n]
-		list = append(list, map[string]any{"name": n, "type": "TReal", "form": s.uom, "description": s.desc,
-			"links": []map[string]string{{"rel": "self", "href": base + "/" + n}}})
+	list := make([]map[string]any, 0)
+	var reg *string
+	pool.QueryRow(r.Context(), "SELECT to_regclass('mf_tproperty')").Scan(&reg)
+	if reg != nil {
+		rows, err := pool.Query(r.Context(),
+			"SELECT name, ptype, coalesce(uom,''), coalesce(description,'') FROM mf_tproperty WHERE cid=$1 AND fid=$2 ORDER BY name",
+			cid, fid)
+		if err != nil {
+			httpErr(w, 500, err.Error())
+			return
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var name, ptype, uom, desc string
+			if err := rows.Scan(&name, &ptype, &uom, &desc); err != nil {
+				break
+			}
+			list = append(list, map[string]any{"name": name, "type": ptype, "form": uom, "description": desc,
+				"links": []map[string]string{{"rel": "self", "href": base + "/" + name}}})
+		}
 	}
 	writeJSON(w, 200, map[string]any{
 		"temporalProperties": list, "numberReturned": len(list), "numberMatched": len(list),
@@ -813,13 +962,13 @@ func apiDoc(w http.ResponseWriter, r *http.Request) {
 			},
 			"/collections/{cid}/items/{fid}/tgsequence/{tgid}/{qtype}": get("Temporal geometry derived query: distance | velocity (acceleration → 501, not derivable for this motion model)"),
 			"/collections/{cid}/items/{fid}/tproperties": map[string]any{
-				"get":  op("Derived temporal properties of a feature"),
-				"post": op("501 — temporal properties are derived from the geometry, not independently writable"),
+				"get":  op("Stored temporal properties of a feature"),
+				"post": op("Add one or more temporal properties (TReal | TInt | TText | TBool) to a feature"),
 			},
 			"/collections/{cid}/items/{fid}/tproperties/{pname}": map[string]any{
-				"get":    op("A derived temporal property (velocity | distance | heading)"),
-				"post":   op("501 — derived property, not independently writable"),
-				"delete": op("501 — derived property, not independently writable"),
+				"get":    op("A stored temporal property as an OGC temporalProperty"),
+				"post":   op("Append values to a temporal property (temporally disjoint; overlap → 409)"),
+				"delete": op("Delete a temporal property"),
 			},
 			"/collections/{cid}/export": get("Bulk lakehouse export: NDJSON, or ?format=parquet (WKB + bbox/time sidecar)"),
 		},
@@ -1110,9 +1259,10 @@ func putItem(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"message": "replaced", "id": strconv.Itoa(fid)})
 }
 
-// deleteItem removes a moving feature.
+// deleteItem removes a moving feature and any temporal properties stored on it.
 func deleteItem(w http.ResponseWriter, r *http.Request) {
-	tbl, _, ok := collectionMeta(r.Context(), r.PathValue("cid"))
+	cid := r.PathValue("cid")
+	tbl, _, ok := collectionMeta(r.Context(), cid)
 	if !ok {
 		httpErr(w, 404, "collection not found")
 		return
@@ -1131,7 +1281,18 @@ func deleteItem(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, 404, "feature not found")
 		return
 	}
+	purgeTProps(r.Context(), "cid=$1 AND fid=$2", cid, fid)
 	w.WriteHeader(204)
+}
+
+// purgeTProps deletes stored temporal properties matching the WHERE clause; it
+// is a no-op when no property has ever been stored (the table is absent).
+func purgeTProps(ctx context.Context, where string, args ...any) {
+	var reg *string
+	pool.QueryRow(ctx, "SELECT to_regclass('mf_tproperty')").Scan(&reg)
+	if reg != nil {
+		pool.Exec(ctx, "DELETE FROM mf_tproperty WHERE "+where, args...)
+	}
 }
 
 // postTgSequence appends a temporally-disjoint sub-trajectory to the feature's
@@ -1170,10 +1331,180 @@ func postTgSequence(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"message": "appended", "id": strconv.Itoa(fid)})
 }
 
-// derivedReadOnly answers writes to derived temporal properties: they are
-// computed from the trajectory, so they are modified through the geometry.
-func derivedReadOnly(w http.ResponseWriter, r *http.Request) {
-	httpErr(w, 501, "temporal properties here (velocity, distance, heading) are derived from the trajectory and are not independently writable; modify the temporal geometry instead")
+// postTProperties registers one or more stored temporal properties on a feature
+// (the body is a single temporalProperty object or an array of them). Each value
+// is parsed by MobilityDB's type-specific *FromMFJSON and stored as a native
+// temporal value, so it is queryable with the same operators as the trajectory.
+func postTProperties(w http.ResponseWriter, r *http.Request) {
+	cid := r.PathValue("cid")
+	tbl, _, ok := collectionMeta(r.Context(), cid)
+	if !ok {
+		httpErr(w, 404, "collection not found")
+		return
+	}
+	fid, err := strconv.Atoi(r.PathValue("fid"))
+	if err != nil {
+		httpErr(w, 400, "invalid feature id")
+		return
+	}
+	var raw json.RawMessage
+	if e := json.NewDecoder(r.Body).Decode(&raw); e != nil {
+		httpErr(w, 400, "invalid JSON body")
+		return
+	}
+	var list []map[string]any
+	if e := json.Unmarshal(raw, &list); e != nil {
+		var one map[string]any
+		if e2 := json.Unmarshal(raw, &one); e2 != nil {
+			httpErr(w, 400, "invalid temporal property body")
+			return
+		}
+		list = []map[string]any{one}
+	}
+	if len(list) == 0 {
+		httpErr(w, 400, "no temporal property supplied")
+		return
+	}
+	tx, err := pool.Begin(r.Context())
+	if err != nil {
+		httpErr(w, 500, err.Error())
+		return
+	}
+	defer tx.Rollback(r.Context())
+	var one int
+	if err := tx.QueryRow(r.Context(), "SELECT 1 FROM "+ident(tbl)+" WHERE id=$1", fid).Scan(&one); err != nil {
+		httpErr(w, 404, "feature not found")
+		return
+	}
+	if err := ensureTPropTable(r.Context(), tx); err != nil {
+		httpErr(w, 500, err.Error())
+		return
+	}
+	names := make([]string, 0, len(list))
+	for _, p := range list {
+		name, _ := p["name"].(string)
+		if name == "" {
+			httpErr(w, 400, "temporal property requires a name")
+			return
+		}
+		typeTok, _ := p["type"].(string)
+		tt, ok := tPropType(typeTok)
+		if !ok {
+			httpErr(w, 400, "unsupported temporal property type: "+typeTok)
+			return
+		}
+		uom := strOf(p["form"])
+		if uom == "" {
+			uom = strOf(p["unitOfMeasure"])
+		}
+		mfjson, perr := tPropMFJSON(tt.mf, tt.defInterp, p)
+		if perr != nil {
+			httpErr(w, 400, perr.Error())
+			return
+		}
+		if _, e := tx.Exec(r.Context(),
+			"INSERT INTO mf_tproperty (cid,fid,name,ptype,uom,description,"+tt.col+") VALUES ($1,$2,$3,$4,$5,$6,"+tt.cast+"FromMFJSON($7))",
+			cid, fid, name, tt.ogc, uom, strOf(p["description"]), mfjson); e != nil {
+			if strings.Contains(e.Error(), "duplicate key") {
+				httpErr(w, 409, "temporal property already exists: "+name)
+				return
+			}
+			httpErr(w, 400, "store temporal property failed: "+e.Error())
+			return
+		}
+		names = append(names, name)
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		httpErr(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, 201, map[string]any{"message": "created", "temporalProperties": names})
+}
+
+// postTPropertyValues appends more values to a stored temporal property; the new
+// values must be temporally disjoint from the existing ones (overlap → 409).
+func postTPropertyValues(w http.ResponseWriter, r *http.Request) {
+	cid, name := r.PathValue("cid"), r.PathValue("pname")
+	if _, _, ok := collectionMeta(r.Context(), cid); !ok {
+		httpErr(w, 404, "collection not found")
+		return
+	}
+	fid, err := strconv.Atoi(r.PathValue("fid"))
+	if err != nil {
+		httpErr(w, 400, "invalid feature id")
+		return
+	}
+	var ptype string
+	err = pool.QueryRow(r.Context(), "SELECT ptype FROM mf_tproperty WHERE cid=$1 AND fid=$2 AND name=$3", cid, fid, name).Scan(&ptype)
+	if errors.Is(err, pgx.ErrNoRows) {
+		httpErr(w, 404, "unknown temporal property: "+name)
+		return
+	}
+	if err != nil {
+		httpErr(w, 500, err.Error())
+		return
+	}
+	tt, ok := tPropType(ptype)
+	if !ok {
+		httpErr(w, 500, "stored property has an unknown type: "+ptype)
+		return
+	}
+	var body map[string]any
+	if e := json.NewDecoder(r.Body).Decode(&body); e != nil {
+		httpErr(w, 400, "invalid JSON body")
+		return
+	}
+	mfjson, perr := tPropMFJSON(tt.mf, tt.defInterp, body)
+	if perr != nil {
+		httpErr(w, 400, perr.Error())
+		return
+	}
+	ct, e := pool.Exec(r.Context(),
+		"UPDATE mf_tproperty SET "+tt.col+"=merge("+tt.col+", "+tt.cast+"FromMFJSON($4)) WHERE cid=$1 AND fid=$2 AND name=$3",
+		cid, fid, name, mfjson)
+	if e != nil {
+		if strings.Contains(e.Error(), "overlap") || strings.Contains(e.Error(), "common timestamp") {
+			httpErr(w, 409, "the new values overlap the existing ones in time: "+e.Error())
+			return
+		}
+		httpErr(w, 400, "append failed: "+e.Error())
+		return
+	}
+	if ct.RowsAffected() == 0 {
+		httpErr(w, 404, "unknown temporal property: "+name)
+		return
+	}
+	writeJSON(w, 200, map[string]any{"message": "appended", "name": name})
+}
+
+// deleteTProperty removes a stored temporal property from a feature.
+func deleteTProperty(w http.ResponseWriter, r *http.Request) {
+	cid, name := r.PathValue("cid"), r.PathValue("pname")
+	if _, _, ok := collectionMeta(r.Context(), cid); !ok {
+		httpErr(w, 404, "collection not found")
+		return
+	}
+	fid, err := strconv.Atoi(r.PathValue("fid"))
+	if err != nil {
+		httpErr(w, 400, "invalid feature id")
+		return
+	}
+	var reg *string
+	pool.QueryRow(r.Context(), "SELECT to_regclass('mf_tproperty')").Scan(&reg)
+	if reg == nil {
+		httpErr(w, 404, "unknown temporal property: "+name)
+		return
+	}
+	ct, e := pool.Exec(r.Context(), "DELETE FROM mf_tproperty WHERE cid=$1 AND fid=$2 AND name=$3", cid, fid, name)
+	if e != nil {
+		httpErr(w, 500, e.Error())
+		return
+	}
+	if ct.RowsAffected() == 0 {
+		httpErr(w, 404, "unknown temporal property: "+name)
+		return
+	}
+	w.WriteHeader(204)
 }
 
 // deleteTgSequence: the feature carries a single inseparable temporal geometry.
@@ -1183,6 +1514,7 @@ func deleteTgSequence(w http.ResponseWriter, r *http.Request) {
 
 // small helpers
 func itoa(n int) string { return strconv.Itoa(n) }
+func strOf(v any) string { s, _ := v.(string); return s }
 func first(q map[string][]string, k string) string {
 	if v := q[k]; len(v) > 0 {
 		return v[0]

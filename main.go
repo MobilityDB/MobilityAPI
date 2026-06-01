@@ -431,7 +431,10 @@ func itemFilters(tbl string, srid int, q map[string][]string) (where string, tgE
 		}
 		add("id > $"+strconv.Itoa(len(args)+1), id)
 	}
-	// bbox: minx,miny,maxx,maxy in the collection CRS -> GiST && via stbox
+	// bbox: minx,miny,maxx,maxy in the collection CRS. The GiST && on the
+	// inline STBOX prefilters on the index; eintersects then refines to the
+	// trajectories whose path actually crosses the envelope (exact, not the
+	// bounding-box superset), so the result is "vessels that cross the box".
 	if v := first(q, "bbox"); v != "" {
 		p := strings.Split(v, ",")
 		if len(p) != 4 {
@@ -444,7 +447,8 @@ func itemFilters(tbl string, srid int, q map[string][]string) (where string, tgE
 			}
 		}
 		n := len(args)
-		add("trip && stbox(ST_MakeEnvelope($"+itoa(n+1)+",$"+itoa(n+2)+",$"+itoa(n+3)+",$"+itoa(n+4)+",$"+itoa(n+5)+"))",
+		env := "ST_MakeEnvelope($" + itoa(n+1) + ",$" + itoa(n+2) + ",$" + itoa(n+3) + ",$" + itoa(n+4) + ",$" + itoa(n+5) + ")"
+		add("trip && stbox("+env+") AND eintersects(trip, "+env+")",
 			f[0], f[1], f[2], f[3], srid)
 	}
 	// OGC uses lowercase "subtrajectory"; accept the camelCase form too.

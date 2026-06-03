@@ -247,7 +247,7 @@ func getCollection(w http.ResponseWriter, r *http.Request) {
 	// extent: spatial bbox and temporal interval from the collection's STBOX
 	var xmin, ymin, xmax, ymax *float64
 	var tmin, tmax *string
-	if err := db.QueryRow(r.Context(), "SELECT Xmin(e),Ymin(e),Xmax(e),Ymax(e),Tmin(e)::text,Tmax(e)::text "+
+	if err := db.QueryRow(r.Context(), "SELECT Xmin(e),Ymin(e),Xmax(e),Ymax(e),CAST(Tmin(e) AS text),CAST(Tmax(e) AS text) "+
 		"FROM (SELECT extent(trip) e FROM "+ident(tbl)+") s").Scan(&xmin, &ymin, &xmax, &ymax, &tmin, &tmax); err == nil &&
 		xmin != nil && tmin != nil {
 		col["extent"] = map[string]any{
@@ -448,7 +448,7 @@ func itemFilters(tbl string, srid int, q map[string][]string) (where string, tgE
 			return "", "", nil, errors.New("datetime must be start/end (RFC3339)")
 		}
 		n := len(args)
-		span := "$" + itoa(n+1) + "::tstzspan"
+		span := "CAST($" + itoa(n+1) + " AS tstzspan)"
 		add("trip && "+span, "["+s+", "+e+"]")
 		if sub == "true" {
 			// clip each trajectory to the window; drop rows whose values fall in
@@ -493,7 +493,7 @@ func streamItems(w http.ResponseWriter, r *http.Request) {
 	lp := "$" + itoa(len(args))
 	generic := collectionGeneric(r.Context(), tbl)
 	fc := featCols(generic)
-	sql := "SELECT id, " + propSel(generic) + ", Xmin(b),Ymin(b),Xmax(b),Ymax(b),Tmin(b)::text,Tmax(b)::text, asMFJSON(g) FROM (" +
+	sql := "SELECT id, " + propSel(generic) + ", Xmin(b),Ymin(b),Xmax(b),Ymax(b),CAST(Tmin(b) AS text),CAST(Tmax(b) AS text), asMFJSON(g) FROM (" +
 		"SELECT " + fc + ", g, stbox(g) AS b FROM (" +
 		"SELECT " + fc + ", " + tgExpr + " AS g FROM " + ident(tbl) + " " + where +
 		" ORDER BY id LIMIT " + lp + ") i) s ORDER BY id"
@@ -553,7 +553,7 @@ func getItem(w http.ResponseWriter, r *http.Request) {
 	}
 	generic := collectionGeneric(r.Context(), tbl)
 	fc := featCols(generic)
-	sql := "SELECT id, " + propSel(generic) + ", Xmin(b),Ymin(b),Xmax(b),Ymax(b),Tmin(b)::text,Tmax(b)::text, asMFJSON(g), ST_AsGeoJSON(trajectory(g))::text FROM (" +
+	sql := "SELECT id, " + propSel(generic) + ", Xmin(b),Ymin(b),Xmax(b),Ymax(b),CAST(Tmin(b) AS text),CAST(Tmax(b) AS text), asMFJSON(g), CAST(ST_AsGeoJSON(trajectory(g)) AS text) FROM (" +
 		"SELECT " + fc + ", g, stbox(g) AS b FROM (" +
 		"SELECT " + fc + ", trip AS g FROM " + ident(tbl) + " WHERE id=$1) i) s"
 	var id int64
@@ -695,15 +695,15 @@ func clip(expr string, q url.Values, args []any) (string, []any, error) {
 			return "", nil, err
 		}
 		args = append(args, set)
-		return "atTime(" + expr + ", $" + itoa(len(args)) + "::tstzset)", args, nil
+		return "atTime(" + expr + ", CAST($" + itoa(len(args)) + " AS tstzset))", args, nil
 	}
 	if dt := q.Get("datetime"); dt != "" {
 		if s, e, ok := splitInterval(dt); ok {
 			args = append(args, "["+s+", "+e+"]")
-			return "atTime(" + expr + ", $" + itoa(len(args)) + "::tstzspan)", args, nil
+			return "atTime(" + expr + ", CAST($" + itoa(len(args)) + " AS tstzspan))", args, nil
 		}
 		args = append(args, "{"+strings.TrimSpace(dt)+"}") // a single instant
-		return "atTime(" + expr + ", $" + itoa(len(args)) + "::tstzset)", args, nil
+		return "atTime(" + expr + ", CAST($" + itoa(len(args)) + " AS tstzset))", args, nil
 	}
 	return expr, args, nil
 }
@@ -1111,12 +1111,12 @@ type pqRowGeneric struct {
 // materialises once per row (g) so the sidecar accessors do not re-clip.
 func streamParquet(w http.ResponseWriter, r *http.Request, tbl, tgExpr, where, tail string, args []any, generic bool) {
 	sidecar := " asBinary(g), Xmin(stbox(g)), Ymin(stbox(g)), Xmax(stbox(g)), Ymax(stbox(g))," +
-		" Tmin(stbox(g))::text, Tmax(stbox(g))::text FROM (" +
+		" CAST(Tmin(stbox(g)) AS text), CAST(Tmax(stbox(g)) AS text) FROM (" +
 		"SELECT id, %s " + tgExpr + " AS g FROM " + ident(tbl) + " " + where + " ORDER BY id" + tail + ") s"
 	w.Header().Set("Content-Type", "application/vnd.apache.parquet")
 	w.Header().Set("Content-Disposition", `attachment; filename="`+tbl+`.parquet"`)
 	if generic {
-		sql := "SELECT id, props," + fmt.Sprintf(sidecar, "coalesce(properties,'{}'::jsonb)::text AS props,")
+		sql := "SELECT id, props," + fmt.Sprintf(sidecar, "CAST(coalesce(properties,CAST('{}' AS jsonb)) AS text) AS props,")
 		rows, err := db.Query(r.Context(), sql, args...)
 		if err != nil {
 			httpErr(w, 500, err.Error())
@@ -1214,7 +1214,7 @@ func postItem(w http.ResponseWriter, r *http.Request) {
 	var execErr error
 	if collectionGeneric(r.Context(), tbl) {
 		_, execErr = db.Exec(r.Context(),
-			"INSERT INTO "+ident(tbl)+"(id,properties,trip) VALUES ($1,$2::jsonb, setSRID(tgeompointFromMFJSON($3), $4))",
+			"INSERT INTO "+ident(tbl)+"(id,properties,trip) VALUES ($1,CAST($2 AS jsonb), setSRID(tgeompointFromMFJSON($3), $4))",
 			id, propsJSON(feat.Properties), string(tgBytes), srid)
 	} else {
 		name, _ := feat.Properties["name"].(string)
@@ -1285,7 +1285,7 @@ func putItem(w http.ResponseWriter, r *http.Request) {
 	var ct int64
 	if collectionGeneric(r.Context(), tbl) {
 		ct, err = db.Exec(r.Context(),
-			"UPDATE "+ident(tbl)+" SET properties=$2::jsonb, trip=setSRID(tgeompointFromMFJSON($3), $4) WHERE id=$1",
+			"UPDATE "+ident(tbl)+" SET properties=CAST($2 AS jsonb), trip=setSRID(tgeompointFromMFJSON($3), $4) WHERE id=$1",
 			fid, propsJSON(props), tgText, srid)
 	} else {
 		name, _ := props["name"].(string)

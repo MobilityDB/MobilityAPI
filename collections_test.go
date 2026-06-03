@@ -39,7 +39,7 @@ func TestValidID(t *testing.T) {
 // propSel / featCols switch the projection between the generic JSONB properties
 // column and the typed ships columns (the envelope is assembled in the tier).
 func TestSchemaMode(t *testing.T) {
-	if propSel(true) != "coalesce(properties,'{}'::jsonb)::text" {
+	if propSel(true) != "CAST(coalesce(properties,CAST('{}' AS jsonb)) AS text)" {
 		t.Errorf("generic propSel wrong: %s", propSel(true))
 	}
 	if propSel(false) != "mmsi, name" {

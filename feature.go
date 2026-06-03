@@ -105,7 +105,7 @@ func buildFeature(id int64, props json.RawMessage, srid int, bbox []float64, tmi
 // in the tier by typedProps, not a per-engine json builder in SQL).
 func propSel(generic bool) string {
 	if generic {
-		return "coalesce(properties,'{}'::jsonb)::text"
+		return "CAST(coalesce(properties,CAST('{}' AS jsonb)) AS text)"
 	}
 	return "mmsi, name"
 }

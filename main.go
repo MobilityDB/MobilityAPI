@@ -735,21 +735,22 @@ func tgSequence(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// The tgeompoint is a sequence set; each member sequence is one OGC temporal
-	// primitive geometry, addressed by its 1-based index (sequenceN).
-	sql := "SELECT n, asMFJSON(sequenceN(g.trip, n)) FROM (SELECT " + expr +
-		" AS trip FROM " + ident(tbl) + " WHERE id=$1) g, generate_series(1, numSequences(g.trip)) n ORDER BY n"
-	rows, err := db.Query(r.Context(), sql, args...)
-	if err != nil {
+	// primitive geometry, addressed by its 1-based index (sequenceN). The count
+	// is iterated in the tier so the SQL stays portable (no generate_series).
+	var nseq *int
+	if err := db.QueryRow(r.Context(), "SELECT numSequences("+expr+") FROM "+ident(tbl)+" WHERE id=$1", args...).Scan(&nseq); err != nil {
 		httpErr(w, 400, err.Error())
 		return
 	}
-	defer rows.Close()
+	count := 0
+	if nseq != nil {
+		count = *nseq
+	}
 	var ns []int
 	var mfjsons [][]byte
-	for rows.Next() {
-		var n int
+	for n := 1; n <= count; n++ {
 		var mf string
-		if err := rows.Scan(&n, &mf); err != nil {
+		if err := db.QueryRow(r.Context(), "SELECT asMFJSON(sequenceN("+expr+", "+itoa(n)+")) FROM "+ident(tbl)+" WHERE id=$1", args...).Scan(&mf); err != nil {
 			break
 		}
 		ns = append(ns, n)

@@ -52,6 +52,9 @@ func openBackend(dsn string) (Backend, error) {
 	if strings.HasPrefix(dsn, "duckdb:") {
 		return openDuck(dsn)
 	}
+	if strings.HasPrefix(dsn, "spark:") {
+		return openSpark(dsn)
+	}
 	cfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
 		return nil, err

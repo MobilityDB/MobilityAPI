@@ -29,14 +29,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/parquet-go/parquet-go"
 )
 
 var (
-	pool         *pgxpool.Pool
+	db           Backend
 	defaultLimit = envInt("MFAPI_DEFAULT_LIMIT", 100)
 	maxLimit     = envInt("MFAPI_MAX_LIMIT", 10000)
 	exportBatch  = envInt("MFAPI_EXPORT_LIMIT", 0)        // 0 = unbounded stream
@@ -69,17 +66,13 @@ func main() {
 	if dsn == "" {
 		dsn = "postgres:///mfapi_demo?host=/tmp&port=5432&user=esteban"
 	}
-	cfg, err := pgxpool.ParseConfig(dsn)
+	var err error
+	db, err = openBackend(dsn)
 	if err != nil {
 		log.Fatal(err)
 	}
-	cfg.MaxConns = int32(envInt("MFAPI_MAXCONNS", 16))
-	pool, err = pgxpool.NewWithConfig(context.Background(), cfg)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer pool.Close()
-	if err := pool.Ping(context.Background()); err != nil {
+	defer db.Close()
+	if err := db.Ping(context.Background()); err != nil {
 		log.Fatal("db ping: ", err)
 	}
 
@@ -118,7 +111,7 @@ func main() {
 	srv := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second}
 	// streaming/export responses can be long-lived: no WriteTimeout (use ctx).
 	go func() {
-		log.Printf("MobilityAPI-go on %s (pool max=%d, default/max limit=%d/%d) — streaming, keyset-paged, lakehouse-ready", addr, cfg.MaxConns, defaultLimit, maxLimit)
+		log.Printf("MobilityAPI-go on %s (pool max=%d, default/max limit=%d/%d) — streaming, keyset-paged, lakehouse-ready", addr, envInt("MFAPI_MAXCONNS", 16), defaultLimit, maxLimit)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Fatal(err)
 		}
@@ -149,7 +142,7 @@ func httpErr(w http.ResponseWriter, code int, desc string) {
 // collectionMeta validates the collection id against the registry and returns
 // the feature table name and crs (whitelist — no interpolation of user input).
 func collectionMeta(ctx context.Context, cid string) (table string, srid int, ok bool) {
-	err := pool.QueryRow(ctx, `SELECT id, crs FROM collections WHERE id=$1`, cid).Scan(&table, &srid)
+	err := db.QueryRow(ctx, `SELECT id, crs FROM collections WHERE id=$1`, cid).Scan(&table, &srid)
 	return table, srid, err == nil
 }
 
@@ -158,7 +151,7 @@ func collectionMeta(ctx context.Context, cid string) (table string, srid int, ok
 // /collections) rather than the typed ships columns (mmsi, name).
 func collectionGeneric(ctx context.Context, table string) bool {
 	var g bool
-	pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM information_schema.columns
+	db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM information_schema.columns
 	  WHERE table_schema='public' AND table_name=$1 AND column_name='properties')`, table).Scan(&g)
 	return g
 }
@@ -226,7 +219,7 @@ func conformance(w http.ResponseWriter, r *http.Request) {
 }
 func listCollections(w http.ResponseWriter, r *http.Request) {
 	var body string
-	if err := pool.QueryRow(r.Context(), `SELECT jsonb_build_object('collections',
+	if err := db.QueryRow(r.Context(), `SELECT jsonb_build_object('collections',
 	  coalesce(jsonb_agg(jsonb_build_object('id',id,'title',title,'description',description,'itemType',item_type,
 	    'crs', jsonb_build_array('http://www.opengis.net/def/crs/EPSG/0/'||crs),
 	    'links', jsonb_build_array(
@@ -248,7 +241,7 @@ func getCollection(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var title, desc, itemType string
-	if err := pool.QueryRow(r.Context(), `SELECT title,description,item_type FROM collections WHERE id=$1`, cid).
+	if err := db.QueryRow(r.Context(), `SELECT title,description,item_type FROM collections WHERE id=$1`, cid).
 		Scan(&title, &desc, &itemType); err != nil {
 		httpErr(w, 404, "collection not found")
 		return
@@ -266,7 +259,7 @@ func getCollection(w http.ResponseWriter, r *http.Request) {
 	// extent: spatial bbox and temporal interval from the collection's STBOX
 	var xmin, ymin, xmax, ymax *float64
 	var tmin, tmax *string
-	if err := pool.QueryRow(r.Context(), "SELECT Xmin(e),Ymin(e),Xmax(e),Ymax(e),Tmin(e)::text,Tmax(e)::text "+
+	if err := db.QueryRow(r.Context(), "SELECT Xmin(e),Ymin(e),Xmax(e),Ymax(e),Tmin(e)::text,Tmax(e)::text "+
 		"FROM (SELECT extent(trip) e FROM "+ident(tbl)+") s").Scan(&xmin, &ymin, &xmax, &ymax, &tmin, &tmax); err == nil &&
 		xmin != nil && tmin != nil {
 		col["extent"] = map[string]any{
@@ -325,7 +318,7 @@ func postCollection(w http.ResponseWriter, r *http.Request) {
 		c.ItemType = "movingfeature"
 	}
 	srid := crsCode(c.CRS)
-	tx, err := pool.Begin(r.Context())
+	tx, err := db.Begin(r.Context())
 	if err != nil {
 		httpErr(w, 500, err.Error())
 		return
@@ -373,14 +366,14 @@ func putCollection(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, 400, "invalid Collection body")
 		return
 	}
-	ct, err := pool.Exec(r.Context(),
+	ct, err := db.Exec(r.Context(),
 		`UPDATE collections SET title=$2, description=$3, crs=$4 WHERE id=$1`,
 		cid, c.Title, c.Description, crsCode(c.CRS))
 	if err != nil {
 		httpErr(w, 400, "update failed: "+err.Error())
 		return
 	}
-	if ct.RowsAffected() == 0 {
+	if ct == 0 {
 		httpErr(w, 404, "collection not found")
 		return
 	}
@@ -396,7 +389,7 @@ func deleteCollection(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, 404, "collection not found")
 		return
 	}
-	tx, err := pool.Begin(r.Context())
+	tx, err := db.Begin(r.Context())
 	if err != nil {
 		httpErr(w, 500, err.Error())
 		return
@@ -520,7 +513,7 @@ func streamItems(w http.ResponseWriter, r *http.Request) {
 		"SELECT " + fc + ", g, stbox(g) AS b FROM (" +
 		"SELECT " + fc + ", " + tgExpr + " AS g FROM " + ident(tbl) + " " + where +
 		" ORDER BY id LIMIT " + lp + ") i) s ORDER BY id"
-	rows, err := pool.Query(r.Context(), sql, args...)
+	rows, err := db.Query(r.Context(), sql, args...)
 	if err != nil {
 		httpErr(w, 500, err.Error())
 		return
@@ -576,7 +569,7 @@ func getItem(w http.ResponseWriter, r *http.Request) {
 		"SELECT " + fc + ", g, stbox(g) AS b FROM (" +
 		"SELECT " + fc + ", trip AS g FROM " + ident(tbl) + " WHERE id=$1) i) s"
 	var body string
-	if err := pool.QueryRow(r.Context(), sql, fid, itoa(srid), r.PathValue("cid")).Scan(&body); err != nil {
+	if err := db.QueryRow(r.Context(), sql, fid, itoa(srid), r.PathValue("cid")).Scan(&body); err != nil {
 		httpErr(w, 404, "feature not found")
 		return
 	}
@@ -676,7 +669,7 @@ func tPropMFJSON(mfType, defInterp string, body map[string]any) (string, error) 
 // row per (collection, feature, property) holding the value as a native
 // MobilityDB temporal value in the column matching its type.
 func ensureTPropTable(ctx context.Context, q interface {
-	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
+	Exec(context.Context, string, ...any) (int64, error)
 }) error {
 	_, err := q.Exec(ctx, `CREATE TABLE IF NOT EXISTS mf_tproperty (
 	  cid text NOT NULL, fid bigint NOT NULL, name text NOT NULL,
@@ -738,8 +731,8 @@ func tgSequence(w http.ResponseWriter, r *http.Request) {
 		"FROM generate_series(1, numSequences(g.trip)) AS n), '[]'::jsonb)," +
 		"'links', jsonb_build_array(jsonb_build_object('rel','self','href'," + selfP + "::text)))::text FROM g"
 	var body *string
-	err = pool.QueryRow(r.Context(), sql, args...).Scan(&body)
-	if errors.Is(err, pgx.ErrNoRows) {
+	err = db.QueryRow(r.Context(), sql, args...).Scan(&body)
+	if errors.Is(err, ErrNoRows) {
 		httpErr(w, 404, "feature not found")
 		return
 	}
@@ -784,8 +777,8 @@ func tgSequenceQuery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var nseq *int
-	err = pool.QueryRow(r.Context(), "SELECT numSequences(trip) FROM "+ident(tbl)+" WHERE id=$1", fid).Scan(&nseq)
-	if errors.Is(err, pgx.ErrNoRows) {
+	err = db.QueryRow(r.Context(), "SELECT numSequences(trip) FROM "+ident(tbl)+" WHERE id=$1", fid).Scan(&nseq)
+	if errors.Is(err, ErrNoRows) {
 		httpErr(w, 404, "feature not found")
 		return
 	}
@@ -818,10 +811,10 @@ func getTProperty(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var ptype, uom, desc string
-	err = pool.QueryRow(r.Context(),
+	err = db.QueryRow(r.Context(),
 		"SELECT ptype, coalesce(uom,''), coalesce(description,'') FROM mf_tproperty WHERE cid=$1 AND fid=$2 AND name=$3",
 		cid, fid, name).Scan(&ptype, &uom, &desc)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, ErrNoRows) {
 		httpErr(w, 404, "unknown temporal property: "+name)
 		return
 	}
@@ -844,7 +837,7 @@ func getTProperty(w http.ResponseWriter, r *http.Request) {
 	sql := "WITH base AS (SELECT asMFJSON(" + expr + ")::jsonb AS j FROM mf_tproperty WHERE cid=$1 AND fid=$2 AND name=$3) " +
 		tPropertyReshape(tt.ogc, "$3", "$4", "$5", selfP)
 	var body *string
-	if err := pool.QueryRow(r.Context(), sql, args...).Scan(&body); err != nil {
+	if err := db.QueryRow(r.Context(), sql, args...).Scan(&body); err != nil {
 		httpErr(w, 400, err.Error())
 		return
 	}
@@ -895,8 +888,8 @@ func writeTemporalProperty(w http.ResponseWriter, r *http.Request, tbl, name str
 	sql := "WITH base AS (SELECT asMFJSON(" + expr + ")::jsonb AS j FROM " + ident(tbl) + " WHERE id=$1) " +
 		tPropertyReshape("TReal", "$2", "$3", "$4", selfP)
 	var body string
-	err = pool.QueryRow(r.Context(), sql, args...).Scan(&body)
-	if errors.Is(err, pgx.ErrNoRows) {
+	err = db.QueryRow(r.Context(), sql, args...).Scan(&body)
+	if errors.Is(err, ErrNoRows) {
 		httpErr(w, 404, "feature not found")
 		return
 	}
@@ -921,16 +914,16 @@ func listTProperties(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var one int
-	if err := pool.QueryRow(r.Context(), "SELECT 1 FROM "+ident(tbl)+" WHERE id=$1", fid).Scan(&one); err != nil {
+	if err := db.QueryRow(r.Context(), "SELECT 1 FROM "+ident(tbl)+" WHERE id=$1", fid).Scan(&one); err != nil {
 		httpErr(w, 404, "feature not found")
 		return
 	}
 	base := r.URL.Path
 	list := make([]map[string]any, 0)
 	var reg *string
-	pool.QueryRow(r.Context(), "SELECT to_regclass('mf_tproperty')").Scan(&reg)
+	db.QueryRow(r.Context(), "SELECT to_regclass('mf_tproperty')").Scan(&reg)
 	if reg != nil {
-		rows, err := pool.Query(r.Context(),
+		rows, err := db.Query(r.Context(),
 			"SELECT name, ptype, coalesce(uom,''), coalesce(description,'') FROM mf_tproperty WHERE cid=$1 AND fid=$2 ORDER BY name",
 			cid, fid)
 		if err != nil {
@@ -1017,7 +1010,7 @@ func apiDoc(w http.ResponseWriter, r *http.Request) {
 				"delete": op("Delete a temporal property"),
 			},
 			"/collections/{cid}/export": get("Bulk lakehouse export: NDJSON, or ?format=parquet (WKB + bbox/time sidecar)"),
-			"/collections/{cid}/bulk": map[string]any{"post": op("Bulk ingest (extension): a batch of (vehicleId, position, time) observations as GeoJSON Points or GeoParquet, optionally gzip/deflate/br/zstd-compressed; each is appended as one instant")},
+			"/collections/{cid}/bulk":   map[string]any{"post": op("Bulk ingest (extension): a batch of (vehicleId, position, time) observations as GeoJSON Points or GeoParquet, optionally gzip/deflate/br/zstd-compressed; each is appended as one instant")},
 		},
 	}
 	w.Header().Set("Content-Type", "application/vnd.oai.openapi+json;version=3.0")
@@ -1055,7 +1048,7 @@ func export(w http.ResponseWriter, r *http.Request) {
 		"'properties'," + propsExpr(generic) + "," +
 		"'temporalGeometry', asMFJSON(" + tgExpr + ")::jsonb)::text " +
 		"FROM " + ident(tbl) + " " + where + " ORDER BY id" + tail
-	rows, err := pool.Query(r.Context(), sql, args...)
+	rows, err := db.Query(r.Context(), sql, args...)
 	if err != nil {
 		httpErr(w, 500, err.Error())
 		return
@@ -1119,7 +1112,7 @@ func streamParquet(w http.ResponseWriter, r *http.Request, tbl, tgExpr, where, t
 	w.Header().Set("Content-Disposition", `attachment; filename="`+tbl+`.parquet"`)
 	if generic {
 		sql := "SELECT id, props," + fmt.Sprintf(sidecar, "coalesce(properties,'{}'::jsonb)::text AS props,")
-		rows, err := pool.Query(r.Context(), sql, args...)
+		rows, err := db.Query(r.Context(), sql, args...)
 		if err != nil {
 			httpErr(w, 500, err.Error())
 			return
@@ -1153,7 +1146,7 @@ func streamParquet(w http.ResponseWriter, r *http.Request, tbl, tgExpr, where, t
 		return
 	}
 	sql := "SELECT id, mmsi, name," + fmt.Sprintf(sidecar, "coalesce(mmsi,0) AS mmsi, coalesce(name,'') AS name,")
-	rows, err := pool.Query(r.Context(), sql, args...)
+	rows, err := db.Query(r.Context(), sql, args...)
 	if err != nil {
 		httpErr(w, 500, err.Error())
 		return
@@ -1215,12 +1208,12 @@ func postItem(w http.ResponseWriter, r *http.Request) {
 	id, _ := feat.ID.Int64()
 	var execErr error
 	if collectionGeneric(r.Context(), tbl) {
-		_, execErr = pool.Exec(r.Context(),
+		_, execErr = db.Exec(r.Context(),
 			"INSERT INTO "+ident(tbl)+"(id,properties,trip) VALUES ($1,$2::jsonb, setSRID(tgeompointFromMFJSON($3), $4))",
 			id, propsJSON(feat.Properties), string(tgBytes), srid)
 	} else {
 		name, _ := feat.Properties["name"].(string)
-		_, execErr = pool.Exec(r.Context(),
+		_, execErr = db.Exec(r.Context(),
 			"INSERT INTO "+ident(tbl)+"(id,mmsi,name,trip) VALUES ($1,$2,$3, setSRID(tgeompointFromMFJSON($4), $5))",
 			id, nil, name, string(tgBytes), srid)
 	}
@@ -1284,14 +1277,14 @@ func putItem(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, 400, derr.Error())
 		return
 	}
-	var ct pgconn.CommandTag
+	var ct int64
 	if collectionGeneric(r.Context(), tbl) {
-		ct, err = pool.Exec(r.Context(),
+		ct, err = db.Exec(r.Context(),
 			"UPDATE "+ident(tbl)+" SET properties=$2::jsonb, trip=setSRID(tgeompointFromMFJSON($3), $4) WHERE id=$1",
 			fid, propsJSON(props), tgText, srid)
 	} else {
 		name, _ := props["name"].(string)
-		ct, err = pool.Exec(r.Context(),
+		ct, err = db.Exec(r.Context(),
 			"UPDATE "+ident(tbl)+" SET name=$2, trip=setSRID(tgeompointFromMFJSON($3), $4) WHERE id=$1",
 			fid, name, tgText, srid)
 	}
@@ -1299,7 +1292,7 @@ func putItem(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, 400, "update failed: "+err.Error())
 		return
 	}
-	if ct.RowsAffected() == 0 {
+	if ct == 0 {
 		httpErr(w, 404, "feature not found")
 		return
 	}
@@ -1319,12 +1312,12 @@ func deleteItem(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, 400, "invalid feature id")
 		return
 	}
-	ct, err := pool.Exec(r.Context(), "DELETE FROM "+ident(tbl)+" WHERE id=$1", fid)
+	ct, err := db.Exec(r.Context(), "DELETE FROM "+ident(tbl)+" WHERE id=$1", fid)
 	if err != nil {
 		httpErr(w, 500, err.Error())
 		return
 	}
-	if ct.RowsAffected() == 0 {
+	if ct == 0 {
 		httpErr(w, 404, "feature not found")
 		return
 	}
@@ -1336,9 +1329,9 @@ func deleteItem(w http.ResponseWriter, r *http.Request) {
 // is a no-op when no property has ever been stored (the table is absent).
 func purgeTProps(ctx context.Context, where string, args ...any) {
 	var reg *string
-	pool.QueryRow(ctx, "SELECT to_regclass('mf_tproperty')").Scan(&reg)
+	db.QueryRow(ctx, "SELECT to_regclass('mf_tproperty')").Scan(&reg)
 	if reg != nil {
-		pool.Exec(ctx, "DELETE FROM mf_tproperty WHERE "+where, args...)
+		db.Exec(ctx, "DELETE FROM mf_tproperty WHERE "+where, args...)
 	}
 }
 
@@ -1360,7 +1353,7 @@ func postTgSequence(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, 400, derr.Error())
 		return
 	}
-	ct, err := pool.Exec(r.Context(),
+	ct, err := db.Exec(r.Context(),
 		"UPDATE "+ident(tbl)+" SET trip=merge(trip, setSRID(tgeompointFromMFJSON($2), $3)) WHERE id=$1",
 		fid, tgText, srid)
 	if err != nil {
@@ -1371,7 +1364,7 @@ func postTgSequence(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, 400, "append failed: "+err.Error())
 		return
 	}
-	if ct.RowsAffected() == 0 {
+	if ct == 0 {
 		httpErr(w, 404, "feature not found")
 		return
 	}
@@ -1412,7 +1405,7 @@ func postTProperties(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, 400, "no temporal property supplied")
 		return
 	}
-	tx, err := pool.Begin(r.Context())
+	tx, err := db.Begin(r.Context())
 	if err != nil {
 		httpErr(w, 500, err.Error())
 		return
@@ -1482,8 +1475,8 @@ func postTPropertyValues(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var ptype string
-	err = pool.QueryRow(r.Context(), "SELECT ptype FROM mf_tproperty WHERE cid=$1 AND fid=$2 AND name=$3", cid, fid, name).Scan(&ptype)
-	if errors.Is(err, pgx.ErrNoRows) {
+	err = db.QueryRow(r.Context(), "SELECT ptype FROM mf_tproperty WHERE cid=$1 AND fid=$2 AND name=$3", cid, fid, name).Scan(&ptype)
+	if errors.Is(err, ErrNoRows) {
 		httpErr(w, 404, "unknown temporal property: "+name)
 		return
 	}
@@ -1506,7 +1499,7 @@ func postTPropertyValues(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, 400, perr.Error())
 		return
 	}
-	ct, e := pool.Exec(r.Context(),
+	ct, e := db.Exec(r.Context(),
 		"UPDATE mf_tproperty SET "+tt.col+"=merge("+tt.col+", "+tt.cast+"FromMFJSON($4)) WHERE cid=$1 AND fid=$2 AND name=$3",
 		cid, fid, name, mfjson)
 	if e != nil {
@@ -1517,7 +1510,7 @@ func postTPropertyValues(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, 400, "append failed: "+e.Error())
 		return
 	}
-	if ct.RowsAffected() == 0 {
+	if ct == 0 {
 		httpErr(w, 404, "unknown temporal property: "+name)
 		return
 	}
@@ -1537,17 +1530,17 @@ func deleteTProperty(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var reg *string
-	pool.QueryRow(r.Context(), "SELECT to_regclass('mf_tproperty')").Scan(&reg)
+	db.QueryRow(r.Context(), "SELECT to_regclass('mf_tproperty')").Scan(&reg)
 	if reg == nil {
 		httpErr(w, 404, "unknown temporal property: "+name)
 		return
 	}
-	ct, e := pool.Exec(r.Context(), "DELETE FROM mf_tproperty WHERE cid=$1 AND fid=$2 AND name=$3", cid, fid, name)
+	ct, e := db.Exec(r.Context(), "DELETE FROM mf_tproperty WHERE cid=$1 AND fid=$2 AND name=$3", cid, fid, name)
 	if e != nil {
 		httpErr(w, 500, e.Error())
 		return
 	}
-	if ct.RowsAffected() == 0 {
+	if ct == 0 {
 		httpErr(w, 404, "unknown temporal property: "+name)
 		return
 	}
@@ -1574,8 +1567,8 @@ func deleteTgSequence(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var nseq *int
-	err = pool.QueryRow(r.Context(), "SELECT numSequences(trip) FROM "+ident(tbl)+" WHERE id=$1", fid).Scan(&nseq)
-	if errors.Is(err, pgx.ErrNoRows) {
+	err = db.QueryRow(r.Context(), "SELECT numSequences(trip) FROM "+ident(tbl)+" WHERE id=$1", fid).Scan(&nseq)
+	if errors.Is(err, ErrNoRows) {
 		httpErr(w, 404, "feature not found")
 		return
 	}
@@ -1593,7 +1586,7 @@ func deleteTgSequence(w http.ResponseWriter, r *http.Request) {
 	}
 	// Remove the member by deleting its time span; deleteTime drops a whole
 	// composing sequence and keeps the other members distinct.
-	_, err = pool.Exec(r.Context(),
+	_, err = db.Exec(r.Context(),
 		"UPDATE "+ident(tbl)+" SET trip = deleteTime(trip, getTime(sequenceN(trip, $2))) WHERE id = $1", fid, tg)
 	if err != nil {
 		httpErr(w, 400, "delete failed: "+err.Error())
@@ -1603,7 +1596,7 @@ func deleteTgSequence(w http.ResponseWriter, r *http.Request) {
 }
 
 // small helpers
-func itoa(n int) string { return strconv.Itoa(n) }
+func itoa(n int) string  { return strconv.Itoa(n) }
 func strOf(v any) string { s, _ := v.(string); return s }
 func first(q map[string][]string, k string) string {
 	if v := q[k]; len(v) > 0 {

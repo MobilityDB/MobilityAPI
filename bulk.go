@@ -106,7 +106,7 @@ func bulkIngest(w http.ResponseWriter, r *http.Request) {
 // appendInstant afterwards; only the id and trip columns are touched, so the
 // collection's feature table may carry any other columns.
 func appendBatch(ctx context.Context, tbl string, srid int, obs []observation) (created, extended int, err error) {
-	tx, err := pool.Begin(ctx)
+	tx, err := db.Begin(ctx)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -129,7 +129,7 @@ func appendBatch(ctx context.Context, tbl string, srid int, obs []observation) (
 		if e != nil {
 			return 0, 0, e
 		}
-		if tag.RowsAffected() > 0 {
+		if tag > 0 {
 			extended++
 			continue
 		}

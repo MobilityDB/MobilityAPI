@@ -8,6 +8,7 @@ package main
 import (
 	"context"
 	"errors"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -48,6 +49,9 @@ type Backend interface {
 // openBackend selects the engine from the DSN scheme. Today every DSN is
 // PostgreSQL/MobilityDB; the scheme switch is where MobilityDuck plugs in.
 func openBackend(dsn string) (Backend, error) {
+	if strings.HasPrefix(dsn, "duckdb:") {
+		return openDuck(dsn)
+	}
 	cfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
 		return nil, err

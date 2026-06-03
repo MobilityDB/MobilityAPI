@@ -553,7 +553,7 @@ func getItem(w http.ResponseWriter, r *http.Request) {
 	}
 	generic := collectionGeneric(r.Context(), tbl)
 	fc := featCols(generic)
-	sql := "SELECT id, " + propSel(generic) + ", Xmin(b),Ymin(b),Xmax(b),Ymax(b),Tmin(b)::text,Tmax(b)::text, asMFJSON(g), ST_AsGeoJSON(trajectory(g)) FROM (" +
+	sql := "SELECT id, " + propSel(generic) + ", Xmin(b),Ymin(b),Xmax(b),Ymax(b),Tmin(b)::text,Tmax(b)::text, asMFJSON(g), ST_AsGeoJSON(trajectory(g))::text FROM (" +
 		"SELECT " + fc + ", g, stbox(g) AS b FROM (" +
 		"SELECT " + fc + ", trip AS g FROM " + ident(tbl) + " WHERE id=$1) i) s"
 	var id int64

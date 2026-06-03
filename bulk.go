@@ -116,10 +116,10 @@ func appendBatch(ctx context.Context, tbl string, srid int, obs []observation) (
 		var inst string
 		var args []any
 		if o.wkb != nil {
-			inst = "tgeompoint(ST_SetSRID(ST_GeomFromWKB($1),$2),$3::timestamptz)"
+			inst = "tgeompoint(ST_SetSRID(ST_GeomFromWKB($1),$2),CAST($3 AS timestamptz))"
 			args = []any{o.wkb, srid, o.t}
 		} else {
-			inst = "tgeompoint(ST_SetSRID(ST_MakePoint($1,$2),$3),$4::timestamptz)"
+			inst = "tgeompoint(ST_SetSRID(ST_MakePoint($1,$2),$3),CAST($4 AS timestamptz))"
 			args = []any{o.x, o.y, srid, o.t}
 		}
 		idP := "$" + strconv.Itoa(len(args)+1)

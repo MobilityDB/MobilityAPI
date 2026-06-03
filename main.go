@@ -191,20 +191,35 @@ func conformance(w http.ResponseWriter, r *http.Request) {
 	}})
 }
 func listCollections(w http.ResponseWriter, r *http.Request) {
-	var body string
-	if err := db.QueryRow(r.Context(), `SELECT jsonb_build_object('collections',
-	  coalesce(jsonb_agg(jsonb_build_object('id',id,'title',title,'description',description,'itemType',item_type,
-	    'crs', jsonb_build_array('http://www.opengis.net/def/crs/EPSG/0/'||crs),
-	    'links', jsonb_build_array(
-	      jsonb_build_object('rel','self','href','/collections/'||id),
-	      jsonb_build_object('rel','items','href','/collections/'||id||'/items'),
-	      jsonb_build_object('rel','enclosure','href','/collections/'||id||'/export','type','application/x-ndjson')))),'[]'::jsonb),
-	  'links', jsonb_build_array(jsonb_build_object('rel','self','href','/collections')))::text
-	  FROM collections`).Scan(&body); err != nil {
+	rows, err := db.Query(r.Context(), `SELECT id, title, description, item_type, crs FROM collections ORDER BY id`)
+	if err != nil {
 		httpErr(w, 500, err.Error())
 		return
 	}
-	writeRaw(w, 200, body)
+	defer rows.Close()
+	cols := []map[string]any{}
+	for rows.Next() {
+		var id string
+		var title, desc, itemType *string
+		var crs int
+		if err := rows.Scan(&id, &title, &desc, &itemType, &crs); err != nil {
+			httpErr(w, 500, err.Error())
+			return
+		}
+		cols = append(cols, map[string]any{
+			"id": id, "title": title, "description": desc, "itemType": itemType,
+			"crs": []string{"http://www.opengis.net/def/crs/EPSG/0/" + itoa(crs)},
+			"links": []map[string]string{
+				{"rel": "self", "href": "/collections/" + id},
+				{"rel": "items", "href": "/collections/" + id + "/items"},
+				{"rel": "enclosure", "href": "/collections/" + id + "/export", "type": "application/x-ndjson"},
+			},
+		})
+	}
+	writeJSON(w, 200, map[string]any{
+		"collections": cols,
+		"links":       []map[string]string{{"rel": "self", "href": "/collections"}},
+	})
 }
 func getCollection(w http.ResponseWriter, r *http.Request) {
 	cid := r.PathValue("cid")
@@ -711,32 +726,41 @@ func tgSequence(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, 400, cerr.Error())
 		return
 	}
-	args = append(args, r.URL.Path)
-	selfP := "$" + itoa(len(args))
-	// The tgeompoint is a sequence set; each member sequence is one OGC temporal
-	// primitive geometry, addressed by its 1-based index (sequenceN). Emit the
-	// TemporalGeometrySequence envelope so the {tGeometryId} values are discoverable.
-	sql := "WITH g AS (SELECT " + expr + " AS trip FROM " + ident(tbl) + " WHERE id=$1) " +
-		"SELECT jsonb_build_object('type','TemporalGeometrySequence'," +
-		"'geometrySequence', coalesce((SELECT jsonb_agg(" +
-		"(jsonb_build_object('id', n) || asMFJSON(sequenceN(g.trip, n))::jsonb) ORDER BY n) " +
-		"FROM generate_series(1, numSequences(g.trip)) AS n), '[]'::jsonb)," +
-		"'links', jsonb_build_array(jsonb_build_object('rel','self','href'," + selfP + "::text)))::text FROM g"
-	var body *string
-	err = db.QueryRow(r.Context(), sql, args...).Scan(&body)
-	if errors.Is(err, ErrNoRows) {
+	var one int
+	if err := db.QueryRow(r.Context(), "SELECT 1 FROM "+ident(tbl)+" WHERE id=$1", fid).Scan(&one); errors.Is(err, ErrNoRows) {
 		httpErr(w, 404, "feature not found")
 		return
+	} else if err != nil {
+		httpErr(w, 500, err.Error())
+		return
 	}
+	// The tgeompoint is a sequence set; each member sequence is one OGC temporal
+	// primitive geometry, addressed by its 1-based index (sequenceN).
+	sql := "SELECT n, asMFJSON(sequenceN(g.trip, n)) FROM (SELECT " + expr +
+		" AS trip FROM " + ident(tbl) + " WHERE id=$1) g, generate_series(1, numSequences(g.trip)) n ORDER BY n"
+	rows, err := db.Query(r.Context(), sql, args...)
 	if err != nil {
 		httpErr(w, 400, err.Error())
 		return
 	}
-	if body == nil {
-		httpErr(w, 404, "no temporal geometry for the requested selector")
+	defer rows.Close()
+	var ns []int
+	var mfjsons [][]byte
+	for rows.Next() {
+		var n int
+		var mf string
+		if err := rows.Scan(&n, &mf); err != nil {
+			break
+		}
+		ns = append(ns, n)
+		mfjsons = append(mfjsons, []byte(mf))
+	}
+	body, err := buildTGSequence(r.URL.Path, ns, mfjsons)
+	if err != nil {
+		httpErr(w, 500, err.Error())
 		return
 	}
-	writeRaw(w, 200, ogcify(*body))
+	writeRaw(w, 200, ogcify(string(body)))
 }
 
 // tgSequenceQuery serves the OGC TemporalGeometry derived queries. distance and
@@ -819,68 +843,46 @@ func getTProperty(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, 500, "stored property has an unknown type: "+ptype)
 		return
 	}
-	expr, args, cerr := clip(tt.col, r.URL.Query(), []any{cid, fid, name, uom, desc})
+	expr, args, cerr := clip(tt.col, r.URL.Query(), []any{cid, fid, name})
 	if cerr != nil {
 		httpErr(w, 400, cerr.Error())
 		return
 	}
-	args = append(args, r.URL.Path)
-	selfP := "$" + itoa(len(args))
-	sql := "WITH base AS (SELECT asMFJSON(" + expr + ")::jsonb AS j FROM mf_tproperty WHERE cid=$1 AND fid=$2 AND name=$3) " +
-		tPropertyReshape(tt.ogc, "$3", "$4", "$5", selfP)
-	var body *string
-	if err := db.QueryRow(r.Context(), sql, args...).Scan(&body); err != nil {
+	sql := "SELECT asMFJSON(" + expr + ") FROM mf_tproperty WHERE cid=$1 AND fid=$2 AND name=$3"
+	var mfjson *string
+	if err := db.QueryRow(r.Context(), sql, args...).Scan(&mfjson); err != nil {
 		httpErr(w, 400, err.Error())
 		return
 	}
-	if body == nil {
-		httpErr(w, 404, "no values for the requested selector")
+	mf := []byte("null")
+	if mfjson != nil {
+		mf = []byte(*mfjson)
+	}
+	body, berr := reshapeTemporalProperty(name, tt.ogc, uom, desc, r.URL.Path, mf)
+	if berr != nil {
+		httpErr(w, 500, berr.Error())
 		return
 	}
-	writeRaw(w, 200, ogcify(*body))
+	writeRaw(w, 200, ogcify(string(body)))
 }
 
-// tPropertyReshape is the SELECT that turns a base CTE exposing j = the value's
-// asMFJSON into an OGC temporalProperty. asMFJSON emits continuous values under
-// "sequences" and discrete values (instants / leaf selection) as a single
-// top-level values/datetimes object; both are reshaped into the OGC
-// valueSequence, keeping each segment's interpolation verbatim. typ, np, fp, dp
-// and sp are the type token and the $-placeholders for name, form, description
-// and the self href.
-func tPropertyReshape(typ, np, fp, dp, sp string) string {
-	return "SELECT jsonb_build_object('name'," + np + "::text,'type','" + typ + "','form'," + fp + "::text,'description'," + dp + "::text," +
-		"'valueSequence', CASE" +
-		" WHEN j ? 'sequences' THEN coalesce((SELECT jsonb_agg(jsonb_build_object(" +
-		"'datetimes',seq->'datetimes','values',seq->'values','interpolation',j->>'interpolation'," +
-		"'lower_inc',seq->'lower_inc','upper_inc',seq->'upper_inc') ORDER BY ord) " +
-		"FROM jsonb_array_elements(j->'sequences') WITH ORDINALITY AS t(seq,ord)),'[]'::jsonb)" +
-		" WHEN j ? 'datetimes' THEN jsonb_build_array(jsonb_build_object(" +
-		"'datetimes',j->'datetimes','values',j->'values','interpolation',j->>'interpolation'," +
-		"'lower_inc',j->'lower_inc','upper_inc',j->'upper_inc'))" +
-		" ELSE '[]'::jsonb END," +
-		"'links',jsonb_build_array(jsonb_build_object('rel','self','href'," + sp + "::text)))::text FROM base"
-}
-
-// writeTemporalProperty builds the OGC temporalProperty object in SQL for a
-// derived measure: the tfloat is serialised with asMFJSON and reshaped into a
-// valueSequence, carrying each segment's own interpolation verbatim from MobilityDB.
+// writeTemporalProperty serves a derived measure as an OGC temporalProperty:
+// the tfloat is serialised with asMFJSON and reshaped in the tier, carrying each
+// segment's own interpolation verbatim from MobilityDB.
 func writeTemporalProperty(w http.ResponseWriter, r *http.Request, tbl, name string, spec propSpec) {
 	fid, err := strconv.Atoi(r.PathValue("fid"))
 	if err != nil {
 		httpErr(w, 400, "invalid feature id")
 		return
 	}
-	expr, args, cerr := clip(spec.expr, r.URL.Query(), []any{fid, name, spec.uom, spec.desc})
+	expr, args, cerr := clip(spec.expr, r.URL.Query(), []any{fid})
 	if cerr != nil {
 		httpErr(w, 400, cerr.Error())
 		return
 	}
-	args = append(args, r.URL.Path)
-	selfP := "$" + itoa(len(args))
-	sql := "WITH base AS (SELECT asMFJSON(" + expr + ")::jsonb AS j FROM " + ident(tbl) + " WHERE id=$1) " +
-		tPropertyReshape("TReal", "$2", "$3", "$4", selfP)
-	var body string
-	err = db.QueryRow(r.Context(), sql, args...).Scan(&body)
+	sql := "SELECT asMFJSON(" + expr + ") FROM " + ident(tbl) + " WHERE id=$1"
+	var mfjson *string
+	err = db.QueryRow(r.Context(), sql, args...).Scan(&mfjson)
 	if errors.Is(err, ErrNoRows) {
 		httpErr(w, 404, "feature not found")
 		return
@@ -889,7 +891,16 @@ func writeTemporalProperty(w http.ResponseWriter, r *http.Request, tbl, name str
 		httpErr(w, 400, err.Error())
 		return
 	}
-	writeRaw(w, 200, ogcify(body))
+	mf := []byte("null")
+	if mfjson != nil {
+		mf = []byte(*mfjson)
+	}
+	body, berr := reshapeTemporalProperty(name, "TReal", spec.uom, spec.desc, r.URL.Path, mf)
+	if berr != nil {
+		httpErr(w, 500, berr.Error())
+		return
+	}
+	writeRaw(w, 200, ogcify(string(body)))
 }
 
 // listTProperties lists the stored temporal properties of a feature.

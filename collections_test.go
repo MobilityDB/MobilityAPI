@@ -36,14 +36,14 @@ func TestValidID(t *testing.T) {
 	}
 }
 
-// propsExpr / featCols switch the SQL between the generic JSONB properties
-// column and the typed ships columns.
+// propSel / featCols switch the projection between the generic JSONB properties
+// column and the typed ships columns (the envelope is assembled in the tier).
 func TestSchemaMode(t *testing.T) {
-	if propsExpr(true) != "coalesce(properties,'{}'::jsonb)" {
-		t.Errorf("generic propsExpr wrong: %s", propsExpr(true))
+	if propSel(true) != "coalesce(properties,'{}'::jsonb)::text" {
+		t.Errorf("generic propSel wrong: %s", propSel(true))
 	}
-	if propsExpr(false) != "jsonb_build_object('mmsi',mmsi,'name',name)" {
-		t.Errorf("typed propsExpr wrong: %s", propsExpr(false))
+	if propSel(false) != "mmsi, name" {
+		t.Errorf("typed propSel wrong: %s", propSel(false))
 	}
 	if featCols(true) != "id, properties" || featCols(false) != "id, mmsi, name" {
 		t.Errorf("featCols wrong: %q / %q", featCols(true), featCols(false))

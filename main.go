@@ -156,17 +156,8 @@ func collectionGeneric(ctx context.Context, table string) bool {
 	return g
 }
 
-// propsExpr is the SQL producing a feature's 'properties' JSON: the stored
-// JSONB for generic collections, the typed (mmsi, name) object for ships.
-func propsExpr(generic bool) string {
-	if generic {
-		return "coalesce(properties,'{}'::jsonb)"
-	}
-	return "jsonb_build_object('mmsi',mmsi,'name',name)"
-}
-
 // featCols lists the non-geometry feature columns carried through the inner
-// selects so propsExpr can read them.
+// selects so the projection can read them.
 func featCols(generic bool) string {
 	if generic {
 		return "id, properties"
@@ -179,24 +170,6 @@ func ident(s string) string { return `"` + strings.ReplaceAll(s, `"`, `""`) + `"
 // validID guards identifiers interpolated into CREATE/DROP TABLE (which cannot
 // be parameterised): a collection id must be a plain SQL identifier.
 var validID = regexp.MustCompile(`^[a-z_][a-z0-9_]*$`)
-
-// featureObj builds the OGC MovingFeature JSON for a row exposing columns id,
-// mmsi, name plus a geometry g and its STBOX b. sp and cp are the SQL parameter
-// placeholders for the collection SRID and id. crs is emitted in EPSG:n form and
-// rewritten to the OGC URN by ogcify; bbox/time come from the inline STBOX.
-func featureObj(g, b, sp, cp, pe string, withGeom bool) string {
-	s := "jsonb_build_object('type','Feature','id',id::text," +
-		"'properties'," + pe + "," +
-		"'crs',jsonb_build_object('type','Name','properties',jsonb_build_object('name','EPSG:'||" + sp + "::text))," +
-		"'trs',jsonb_build_object('type','Link','properties',jsonb_build_object('type','ogcdef','href','http://www.opengis.net/def/uom/ISO-8601/0/Gregorian'))," +
-		"'bbox',jsonb_build_array(Xmin(" + b + "),Ymin(" + b + "),Xmax(" + b + "),Ymax(" + b + "))," +
-		"'time',jsonb_build_array(Tmin(" + b + ")::text,Tmax(" + b + ")::text)," +
-		"'temporalGeometry',asMFJSON(" + g + ")::jsonb,"
-	if withGeom {
-		s += "'geometry',ST_AsGeoJSON(trajectory(" + g + "))::jsonb,"
-	}
-	return s + "'links',jsonb_build_array(jsonb_build_object('rel','self','href','/collections/'||" + cp + "||'/items/'||id)))"
-}
 
 func landing(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{
@@ -503,13 +476,9 @@ func streamItems(w http.ResponseWriter, r *http.Request) {
 	}
 	args = append(args, limit)
 	lp := "$" + itoa(len(args))
-	args = append(args, itoa(srid))
-	sp := "$" + itoa(len(args))
-	args = append(args, r.PathValue("cid"))
-	cp := "$" + itoa(len(args))
 	generic := collectionGeneric(r.Context(), tbl)
-	fc, pe := featCols(generic), propsExpr(generic)
-	sql := "SELECT id, " + featureObj("g", "b", sp, cp, pe, false) + "::text FROM (" +
+	fc := featCols(generic)
+	sql := "SELECT id, " + propSel(generic) + ", Xmin(b),Ymin(b),Xmax(b),Ymax(b),Tmin(b)::text,Tmax(b)::text, asMFJSON(g) FROM (" +
 		"SELECT " + fc + ", g, stbox(g) AS b FROM (" +
 		"SELECT " + fc + ", " + tgExpr + " AS g FROM " + ident(tbl) + " " + where +
 		" ORDER BY id LIMIT " + lp + ") i) s ORDER BY id"
@@ -520,6 +489,7 @@ func streamItems(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rows.Close()
 
+	cid := r.PathValue("cid")
 	w.Header().Set("Content-Type", "application/json")
 	bw := bufio.NewWriterSize(w, 64*1024)
 	defer bw.Flush()
@@ -527,15 +497,18 @@ func streamItems(w http.ResponseWriter, r *http.Request) {
 	var lastID int64
 	n := 0
 	for rows.Next() {
-		var id int64
-		var feat string
-		if err := rows.Scan(&id, &feat); err != nil {
+		id, props, bx, tmin, tmax, tgeom, serr := scanFeatureRow(rows, generic)
+		if serr != nil {
+			break
+		}
+		feat, ferr := buildFeature(id, props, srid, bx, tmin, tmax, tgeom, nil, cid)
+		if ferr != nil {
 			break
 		}
 		if n > 0 {
 			bw.WriteByte(',')
 		}
-		bw.WriteString(ogcify(feat))
+		bw.Write(feat)
 		lastID = id
 		n++
 		if n%256 == 0 {
@@ -564,16 +537,35 @@ func getItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	generic := collectionGeneric(r.Context(), tbl)
-	fc, pe := featCols(generic), propsExpr(generic)
-	sql := "SELECT " + featureObj("g", "b", "$2", "$3", pe, true) + "::text FROM (" +
+	fc := featCols(generic)
+	sql := "SELECT id, " + propSel(generic) + ", Xmin(b),Ymin(b),Xmax(b),Ymax(b),Tmin(b)::text,Tmax(b)::text, asMFJSON(g), ST_AsGeoJSON(trajectory(g)) FROM (" +
 		"SELECT " + fc + ", g, stbox(g) AS b FROM (" +
 		"SELECT " + fc + ", trip AS g FROM " + ident(tbl) + " WHERE id=$1) i) s"
-	var body string
-	if err := db.QueryRow(r.Context(), sql, fid, itoa(srid), r.PathValue("cid")).Scan(&body); err != nil {
+	var id int64
+	bx := make([]float64, 4)
+	var tmin, tmax, tgeom, geom string
+	var props json.RawMessage
+	var serr error
+	if generic {
+		var pt string
+		serr = db.QueryRow(r.Context(), sql, fid).Scan(&id, &pt, &bx[0], &bx[1], &bx[2], &bx[3], &tmin, &tmax, &tgeom, &geom)
+		props = json.RawMessage(pt)
+	} else {
+		var mmsi *int64
+		var name *string
+		serr = db.QueryRow(r.Context(), sql, fid).Scan(&id, &mmsi, &name, &bx[0], &bx[1], &bx[2], &bx[3], &tmin, &tmax, &tgeom, &geom)
+		props = typedProps(mmsi, name)
+	}
+	if serr != nil {
 		httpErr(w, 404, "feature not found")
 		return
 	}
-	writeRaw(w, 200, ogcify(body))
+	feat, ferr := buildFeature(id, props, srid, bx, tmin, tmax, []byte(tgeom), []byte(geom), r.PathValue("cid"))
+	if ferr != nil {
+		httpErr(w, 500, ferr.Error())
+		return
+	}
+	writeRaw(w, 200, string(feat))
 }
 
 // propSpec is a temporal property derived from the trajectory by an exact
@@ -1044,9 +1036,7 @@ func export(w http.ResponseWriter, r *http.Request) {
 		streamParquet(w, r, tbl, tgExpr, where, tail, args, generic)
 		return
 	}
-	sql := "SELECT jsonb_build_object('type','Feature','id',id::text," +
-		"'properties'," + propsExpr(generic) + "," +
-		"'temporalGeometry', asMFJSON(" + tgExpr + ")::jsonb)::text " +
+	sql := "SELECT id, " + propSel(generic) + ", asMFJSON(" + tgExpr + ") " +
 		"FROM " + ident(tbl) + " " + where + " ORDER BY id" + tail
 	rows, err := db.Query(r.Context(), sql, args...)
 	if err != nil {
@@ -1059,11 +1049,15 @@ func export(w http.ResponseWriter, r *http.Request) {
 	defer bw.Flush()
 	n := 0
 	for rows.Next() {
-		var feat string
-		if err := rows.Scan(&feat); err != nil {
+		id, props, tgeom, serr := scanExportRow(rows, generic)
+		if serr != nil {
 			break
 		}
-		bw.WriteString(ogcify(feat))
+		feat, ferr := buildExportFeature(id, props, tgeom)
+		if ferr != nil {
+			break
+		}
+		bw.Write(feat)
 		bw.WriteByte('\n')
 		if n++; n%256 == 0 {
 			bw.Flush()

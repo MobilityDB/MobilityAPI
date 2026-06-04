@@ -1,0 +1,517 @@
+// Streaming tier: the engine-neutral control plane for OGC API – Moving
+// Features – Part 4 (Continuous Query / Stream Extension). It is the streaming
+// analogue of the request-response Backend seam: the control plane holds no
+// MEOS and no engine specifics — it defines a continuous query, hands it to a
+// StreamEngine, and delivers the engine's result instants over Server-Sent
+// Events. A continuous transform applies a lifted scalar operation (the
+// temporal counterpart of a float operation: ln, exp, ×, +, …) to a streaming
+// tfloat, exactly as the float operation applies to a scalar.
+//
+// The seam sits at continuous-query submission, not per record, so it extends
+// to the streaming engines the same way Backend extends to the DB engines: the
+// local in-process MEOS engine (cgo, default) spawns a goroutine; a Flink /
+// Kafka / Spark engine deploys a job and bridges its result topic into the same
+// SSE delivery. MEOS runs inside the engine (cgo or JMEOS UDFs) — never as SQL
+// issued to a database in the streaming path.
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+)
+
+// Instant is one stream record: a temporal-property value at a timestamp. The
+// timestamp is carried verbatim as its ISO-8601 string so it round-trips
+// through MEOS without a parse/format step.
+type Instant struct {
+	T string  `json:"datetime"`
+	V float64 `json:"value"`
+}
+
+// QuerySpec is an engine-neutral continuous-query definition.
+type QuerySpec struct {
+	CID      string
+	FID      int
+	Pname    string
+	Op       string        // a lifted scalar operation, e.g. "ln" or "mul"
+	Arg      float64       // operand for scalar ops (add/sub/mul/div); ignored otherwise
+	Interval time.Duration // pacing between emitted records
+}
+
+// StreamEngine is the engine-neutral streaming seam — the streaming analogue of
+// Backend. An implementation runs a continuous query on its platform and
+// exposes the result instants through a QueryHandle.
+type StreamEngine interface {
+	Name() string
+	Submit(ctx context.Context, spec QuerySpec, source <-chan Instant) (QueryHandle, error)
+}
+
+// QueryHandle is a running continuous query on some engine. Results is closed
+// when the query ends. Stop releases any engine-side resources (for cluster
+// engines, cancels the deployed job); the control plane also cancels the
+// context, which is how the local engine stops.
+type QueryHandle interface {
+	Results() <-chan Instant
+	Status() string
+	Stop() error
+}
+
+// makeEngine builds the configured engine; defaultStreamEngine is defined per
+// build tag (the cgo MEOS engine under -tags meos, a stub otherwise). It is a
+// var so tests can inject a fake engine.
+var makeEngine = defaultStreamEngine
+
+var (
+	engMu   sync.Mutex
+	engInst StreamEngine
+	engOK   bool
+)
+
+// streamEngine returns the process-wide engine, building it once.
+func streamEngine() (StreamEngine, error) {
+	engMu.Lock()
+	defer engMu.Unlock()
+	if engOK {
+		return engInst, nil
+	}
+	e, err := makeEngine()
+	if err != nil {
+		return nil, err
+	}
+	engInst, engOK = e, true
+	return e, nil
+}
+
+// opInfo describes a lifted scalar operation exposed by the streaming tier. The
+// engine maps the name to the MEOS function; the control plane only validates.
+type opInfo struct {
+	needsArg bool
+	desc     string
+}
+
+// liftedOps is the catalogue of scalar operations a continuous transform can
+// apply to a tfloat stream. Every entry is a MEOS lifted temporal function that
+// exists today, so the POC needs no kernel change. (sin/cos/tan join this set
+// once MEOS adds them; arithmetic and the listed math functions are present.)
+var liftedOps = map[string]opInfo{
+	"ln":      {false, "natural logarithm"},
+	"exp":     {false, "exponential"},
+	"log10":   {false, "base-10 logarithm"},
+	"ceil":    {false, "ceiling"},
+	"floor":   {false, "floor"},
+	"abs":     {false, "absolute value"},
+	"degrees": {false, "radians to degrees"},
+	"radians": {false, "degrees to radians"},
+	"add":     {true, "add a scalar"},
+	"sub":     {true, "subtract a scalar"},
+	"mul":     {true, "multiply by a scalar"},
+	"div":     {true, "divide by a scalar"},
+}
+
+func supportedOps() string {
+	keys := make([]string, 0, len(liftedOps))
+	for k := range liftedOps {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return strings.Join(keys, ", ")
+}
+
+// contQuery is one registered continuous query: its spec, the engine handle,
+// and the set of SSE subscribers a pump goroutine fans the results out to.
+type contQuery struct {
+	id      string
+	spec    QuerySpec
+	handle  QueryHandle
+	created time.Time
+	cancel  context.CancelFunc
+
+	mu      sync.Mutex
+	subs    map[chan Instant]struct{}
+	stopped bool
+}
+
+// pump fans the engine's result instants out to every subscriber. A slow
+// subscriber is skipped (never blocks the others); when the engine ends, all
+// subscribers are closed.
+func (cq *contQuery) pump() {
+	for in := range cq.handle.Results() {
+		cq.mu.Lock()
+		for ch := range cq.subs {
+			select {
+			case ch <- in:
+			default:
+			}
+		}
+		cq.mu.Unlock()
+	}
+	cq.mu.Lock()
+	cq.stopped = true
+	for ch := range cq.subs {
+		close(ch)
+		delete(cq.subs, ch)
+	}
+	cq.mu.Unlock()
+}
+
+func (cq *contQuery) subscribe() chan Instant {
+	ch := make(chan Instant, 32)
+	cq.mu.Lock()
+	if cq.stopped {
+		close(ch)
+	} else {
+		cq.subs[ch] = struct{}{}
+	}
+	cq.mu.Unlock()
+	return ch
+}
+
+func (cq *contQuery) unsubscribe(ch chan Instant) {
+	cq.mu.Lock()
+	if _, ok := cq.subs[ch]; ok {
+		delete(cq.subs, ch)
+		close(ch)
+	}
+	cq.mu.Unlock()
+}
+
+func (cq *contQuery) stop() {
+	cq.cancel()
+	cq.handle.Stop()
+}
+
+func (cq *contQuery) status() string {
+	cq.mu.Lock()
+	st := cq.stopped
+	cq.mu.Unlock()
+	if st {
+		return "stopped"
+	}
+	return cq.handle.Status()
+}
+
+func (cq *contQuery) basePath() string {
+	return fmt.Sprintf("/collections/%s/items/%d/tproperties/%s/queries", cq.spec.CID, cq.spec.FID, cq.spec.Pname)
+}
+
+// streamRegistry is the in-memory set of running continuous queries.
+type streamRegistry struct {
+	mu      sync.Mutex
+	queries map[string]*contQuery
+	nextID  int
+}
+
+var streamReg = &streamRegistry{queries: map[string]*contQuery{}}
+
+// submit registers a query, starts it on the engine, and begins fanning out its
+// results. The caller owns the cancellable context (the query outlives the HTTP
+// request that created it); cancel is stored so stop() can end it.
+func (r *streamRegistry) submit(ctx context.Context, cancel context.CancelFunc, eng StreamEngine, spec QuerySpec, source <-chan Instant) (*contQuery, error) {
+	h, err := eng.Submit(ctx, spec, source)
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+	r.mu.Lock()
+	r.nextID++
+	id := "q" + strconv.Itoa(r.nextID)
+	cq := &contQuery{id: id, spec: spec, handle: h, created: time.Now().UTC(), cancel: cancel, subs: map[chan Instant]struct{}{}}
+	r.queries[id] = cq
+	r.mu.Unlock()
+	go cq.pump()
+	return cq, nil
+}
+
+func (r *streamRegistry) get(id string) *contQuery {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.queries[id]
+}
+
+func (r *streamRegistry) remove(id string) {
+	r.mu.Lock()
+	delete(r.queries, id)
+	r.mu.Unlock()
+}
+
+func (r *streamRegistry) list(cid string, fid int, name string) []*contQuery {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]*contQuery, 0)
+	for _, cq := range r.queries {
+		if cq.spec.CID == cid && cq.spec.FID == fid && cq.spec.Pname == name {
+			out = append(out, cq)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].id < out[j].id })
+	return out
+}
+
+// cqueryLink renders the OGC 'cquery' link object for a registered query.
+func cqueryLink(r *http.Request, cq *contQuery) map[string]any {
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	self := scheme + "://" + r.Host + cq.basePath() + "/" + cq.id
+	stream := self + "/stream"
+	return map[string]any{
+		"rel":       "cquery",
+		"queryId":   cq.id,
+		"href":      stream,
+		"channel":   cq.basePath() + "/" + cq.id + "/stream",
+		"status":    cq.status(),
+		"type":      "text/event-stream",
+		"operation": cq.spec.Op,
+		"links": []map[string]string{
+			{"rel": "self", "href": self},
+			{"rel": "stream", "href": stream, "type": "text/event-stream"},
+		},
+	}
+}
+
+// parseInstantsMFJSON extracts the (timestamp, value) instants from a tfloat
+// MF-JSON document, handling both the flat form and a sequence set.
+func parseInstantsMFJSON(b []byte) ([]Instant, error) {
+	var doc map[string]any
+	if err := json.Unmarshal(b, &doc); err != nil {
+		return nil, err
+	}
+	var out []Instant
+	collect := func(m map[string]any) {
+		dts, _ := m["datetimes"].([]any)
+		vals, _ := m["values"].([]any)
+		n := len(dts)
+		if len(vals) < n {
+			n = len(vals)
+		}
+		for i := 0; i < n; i++ {
+			ts, _ := dts[i].(string)
+			v, _ := vals[i].(float64)
+			out = append(out, Instant{T: ts, V: v})
+		}
+	}
+	if seqs, ok := doc["sequences"].([]any); ok {
+		for _, s := range seqs {
+			if m, ok := s.(map[string]any); ok {
+				collect(m)
+			}
+		}
+	} else {
+		collect(doc)
+	}
+	if len(out) == 0 {
+		return nil, errors.New("temporal property has no instants to stream")
+	}
+	return out, nil
+}
+
+// replaySource loads the stored tfloat's instants once (through the DB seam —
+// data loading, not per-record work) and replays them as a paced, looping
+// stream, giving the continuous query an unbounded source to process.
+func replaySource(ctx context.Context, cid string, fid int, name string, interval time.Duration) (<-chan Instant, error) {
+	var mf *string
+	err := db.QueryRow(ctx,
+		"SELECT asMFJSON(vfloat) FROM mf_tproperty WHERE cid=$1 AND fid=$2 AND name=$3",
+		cid, fid, name).Scan(&mf)
+	if err != nil {
+		return nil, err
+	}
+	if mf == nil {
+		return nil, errors.New("temporal property value is null")
+	}
+	insts, err := parseInstantsMFJSON([]byte(*mf))
+	if err != nil {
+		return nil, err
+	}
+	out := make(chan Instant)
+	go func() {
+		defer close(out)
+		t := time.NewTicker(interval)
+		defer t.Stop()
+		i := 0
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				select {
+				case out <- insts[i]:
+				case <-ctx.Done():
+					return
+				}
+				i = (i + 1) % len(insts) // loop for an unbounded feel
+			}
+		}
+	}()
+	return out, nil
+}
+
+// postQuery registers a continuous transform on a tfloat temporal property.
+func postQuery(w http.ResponseWriter, r *http.Request) {
+	cid := r.PathValue("cid")
+	name := r.PathValue("pname")
+	if _, _, ok := collectionMeta(r.Context(), cid); !ok {
+		httpErr(w, 404, "collection not found")
+		return
+	}
+	fid, err := strconv.Atoi(r.PathValue("fid"))
+	if err != nil {
+		httpErr(w, 400, "invalid feature id")
+		return
+	}
+	var ptype string
+	err = db.QueryRow(r.Context(),
+		"SELECT ptype FROM mf_tproperty WHERE cid=$1 AND fid=$2 AND name=$3", cid, fid, name).Scan(&ptype)
+	if errors.Is(err, ErrNoRows) {
+		httpErr(w, 404, "unknown temporal property: "+name)
+		return
+	}
+	if err != nil {
+		httpErr(w, 500, err.Error())
+		return
+	}
+	if tt, _ := tPropType(ptype); tt.ogc != "TReal" {
+		httpErr(w, 422, "continuous transforms are defined for TReal (tfloat) properties; "+name+" is "+ptype)
+		return
+	}
+
+	var body struct {
+		Operation  string   `json:"operation"`
+		Arg        *float64 `json:"arg"`
+		IntervalMs int      `json:"intervalMs"`
+	}
+	if r.Body != nil {
+		json.NewDecoder(r.Body).Decode(&body)
+	}
+	op := strings.ToLower(strings.TrimSpace(body.Operation))
+	info, ok := liftedOps[op]
+	if !ok {
+		httpErr(w, 400, "unknown operation: "+body.Operation+" (supported: "+supportedOps()+")")
+		return
+	}
+	if info.needsArg && body.Arg == nil {
+		httpErr(w, 400, "operation "+op+" requires a scalar \"arg\"")
+		return
+	}
+	arg := 0.0
+	if body.Arg != nil {
+		arg = *body.Arg
+	}
+	interval := time.Duration(body.IntervalMs) * time.Millisecond
+	if interval <= 0 {
+		interval = 500 * time.Millisecond
+	}
+
+	eng, err := streamEngine()
+	if err != nil {
+		httpErr(w, 501, err.Error())
+		return
+	}
+
+	qctx, qcancel := context.WithCancel(context.Background())
+	src, err := replaySource(qctx, cid, fid, name, interval)
+	if err != nil {
+		qcancel()
+		httpErr(w, 400, err.Error())
+		return
+	}
+	spec := QuerySpec{CID: cid, FID: fid, Pname: name, Op: op, Arg: arg, Interval: interval}
+	cq, err := streamReg.submit(qctx, qcancel, eng, spec, src)
+	if err != nil {
+		httpErr(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, 201, cqueryLink(r, cq))
+}
+
+// listQueries lists the continuous queries registered on a temporal property.
+func listQueries(w http.ResponseWriter, r *http.Request) {
+	cid := r.PathValue("cid")
+	name := r.PathValue("pname")
+	fid, err := strconv.Atoi(r.PathValue("fid"))
+	if err != nil {
+		httpErr(w, 400, "invalid feature id")
+		return
+	}
+	list := streamReg.list(cid, fid, name)
+	out := make([]any, 0, len(list))
+	for _, cq := range list {
+		out = append(out, cqueryLink(r, cq))
+	}
+	writeJSON(w, 200, map[string]any{"queries": out, "numberReturned": len(out)})
+}
+
+// getQuery returns the cquery link object and current status of one query.
+func getQuery(w http.ResponseWriter, r *http.Request) {
+	cq := streamReg.get(r.PathValue("qid"))
+	if cq == nil {
+		httpErr(w, 404, "unknown query: "+r.PathValue("qid"))
+		return
+	}
+	writeJSON(w, 200, cqueryLink(r, cq))
+}
+
+// deleteQuery stops a running continuous query and removes it.
+func deleteQuery(w http.ResponseWriter, r *http.Request) {
+	cq := streamReg.get(r.PathValue("qid"))
+	if cq == nil {
+		httpErr(w, 404, "unknown query: "+r.PathValue("qid"))
+		return
+	}
+	cq.stop()
+	streamReg.remove(cq.id)
+	w.WriteHeader(204)
+}
+
+// streamQuery delivers a continuous query's result instants as Server-Sent
+// Events — the broker-free channel binding Part 4 allows.
+func streamQuery(w http.ResponseWriter, r *http.Request) {
+	cq := streamReg.get(r.PathValue("qid"))
+	if cq == nil {
+		httpErr(w, 404, "unknown query: "+r.PathValue("qid"))
+		return
+	}
+	fl, ok := w.(http.Flusher)
+	if !ok {
+		httpErr(w, 500, "streaming unsupported by this server")
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.WriteHeader(200)
+	fl.Flush()
+
+	ch := cq.subscribe()
+	defer cq.unsubscribe(ch)
+	ping := time.NewTicker(15 * time.Second)
+	defer ping.Stop()
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-ping.C:
+			fmt.Fprint(w, ": keep-alive\n\n")
+			fl.Flush()
+		case in, ok := <-ch:
+			if !ok {
+				return
+			}
+			b, _ := json.Marshal(map[string]any{
+				"datetime": in.T, "value": in.V,
+				"property": cq.spec.Pname, "operation": cq.spec.Op,
+			})
+			fmt.Fprintf(w, "event: instant\ndata: %s\n\n", b)
+			fl.Flush()
+		}
+	}
+}

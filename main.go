@@ -46,9 +46,18 @@ var ogc2mdbInterp = map[string]string{"Linear": "Linear", "Stepwise": "Step", "D
 var epsgName = regexp.MustCompile(`"name":\s*"EPSG:(\d+)"`)
 var epsgURN = regexp.MustCompile(`EPSG:+(\d+)`)
 
+// hourOnlyOffset matches PostgreSQL's hour-only timezone offset on an ISO
+// timestamp ("…18:57:52+00"); RFC 3339 — and strict parsers such as JS Date —
+// require the ":00" minutes.
+var hourOnlyOffset = regexp.MustCompile(`(\d\d:\d\d:\d\d(?:\.\d+)?)([+-]\d\d)(["\s]|$)`)
+
+// rfc3339Tz completes hour-only timezone offsets so datetimes are RFC 3339.
+func rfc3339Tz(s string) string { return hourOnlyOffset.ReplaceAllString(s, `$1$2:00$3`) }
+
 func ogcify(s string) string {
 	s = strings.ReplaceAll(s, `"interpolation": "Step"`, `"interpolation": "Stepwise"`)
 	s = strings.ReplaceAll(s, `"interpolation":"Step"`, `"interpolation":"Stepwise"`)
+	s = rfc3339Tz(s)
 	return epsgName.ReplaceAllString(s, `"name":"urn:ogc:def:crs:EPSG::$1"`)
 }
 
@@ -106,6 +115,13 @@ func main() {
 	mux.HandleFunc("POST /collections/{cid}/items/{fid}/tproperties/{pname}", postTPropertyValues)
 	mux.HandleFunc("DELETE /collections/{cid}/items/{fid}/tproperties/{pname}", deleteTProperty)
 	mux.HandleFunc("DELETE /collections/{cid}/items/{fid}/tgsequence/{tgid}", deleteTgSequence)
+	// MF Part 4 (Stream Extension): continuous queries on a temporal property,
+	// delivered over Server-Sent Events.
+	mux.HandleFunc("POST /collections/{cid}/items/{fid}/tproperties/{pname}/queries", postQuery)
+	mux.HandleFunc("GET /collections/{cid}/items/{fid}/tproperties/{pname}/queries", listQueries)
+	mux.HandleFunc("GET /collections/{cid}/items/{fid}/tproperties/{pname}/queries/{qid}", getQuery)
+	mux.HandleFunc("GET /collections/{cid}/items/{fid}/tproperties/{pname}/queries/{qid}/stream", streamQuery)
+	mux.HandleFunc("DELETE /collections/{cid}/items/{fid}/tproperties/{pname}/queries/{qid}", deleteQuery)
 
 	addr := ":" + strconv.Itoa(envInt("MFAPI_PORT", 8088))
 	srv := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second}

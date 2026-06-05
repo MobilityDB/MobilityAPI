@@ -32,9 +32,11 @@ are **not yet** exposed.
 - Lifecycle states `running`, `stopped`, `failed` are reported by the `cquery`
   `status` (`registered` is transient — a query enters `running` on submission).
 - Results are delivered over **Server-Sent Events**, one of the channel bindings
-  Part 4 allows; the broker bindings (MQTT, Kafka, WebSocket) are not yet
-  exposed. Live ingestion (`…/ingest`, a query with `"live": true`) is the
-  broker-agnostic form of the EDR Pub/Sub source.
+  Part 4 allows; the Kafka and WebSocket result bindings are not yet exposed.
+- Live ingestion: a query with `"live": true` sources pushed records. Producers
+  push over HTTP (`…/ingest`) or **MQTT** (`MFAPI_MQTT_BROKER`, topic
+  `mfapi/<cid>/<fid>/<pname>`) — the EDR Pub/Sub source over a real broker. A
+  Kafka source feeds the same hub the same way.
 
 ## Extensions beyond Part 4
 

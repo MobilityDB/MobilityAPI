@@ -37,13 +37,21 @@ var sparkFnCall = func() *regexp.Regexp {
 	return regexp.MustCompile(`\b(` + strings.Join(keys, "|") + `)\s*\(`)
 }()
 
+// sparkIdent matches a double-quoted SQL identifier. The tier quotes identifiers
+// Postgres-style ("name"); Spark SQL reads "..." as a string literal and quotes
+// identifiers with backticks. All string literals reach Spark single-quoted (see
+// sparkLiteral), so every double-quoted token is an identifier.
+var sparkIdent = regexp.MustCompile(`"([^"]+)"`)
+
 // rewriteSparkSQL remaps the canonical function names that differ in the Spark
-// idiom; one pass, function-call positions only (name followed by "(").
+// idiom (function-call positions only, name followed by "(") and rewrites
+// double-quoted identifiers to Spark's backtick quoting.
 func rewriteSparkSQL(sql string) string {
-	return sparkFnCall.ReplaceAllStringFunc(sql, func(m string) string {
+	sql = sparkFnCall.ReplaceAllStringFunc(sql, func(m string) string {
 		name := strings.TrimRight(m[:len(m)-1], " \t")
 		return sparkNameMap[name] + "("
 	})
+	return sparkIdent.ReplaceAllString(sql, "`$1`")
 }
 
 // inlineParams substitutes $N placeholders with literals (Spark Connect Sql has

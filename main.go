@@ -211,6 +211,7 @@ func conformance(w http.ResponseWriter, r *http.Request) {
 		"http://www.opengis.net/spec/ogcapi-movingfeatures-1/1.0/conf/common",
 		"http://www.opengis.net/spec/ogcapi-movingfeatures-1/1.0/conf/mf-collection",
 		"http://www.opengis.net/spec/ogcapi-movingfeatures-1/1.0/conf/movingfeatures",
+		"http://www.opengis.net/spec/ogcapi-movingfeatures-4/1.0/conf/cquery",
 		"http://www.opengis.net/spec/ogcapi-common-1/1.0/conf/core",
 		"http://www.opengis.net/spec/ogcapi-common-2/1.0/conf/collections",
 	}})

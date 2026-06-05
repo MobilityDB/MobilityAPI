@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<title>MF Stream — animated fleet</title>
+		<style>
+			html, body { margin: 0; height: 100%; font-family: system-ui, sans-serif; }
+			#map { position: absolute; top: 0; left: 0; right: 0; bottom: 40px; }
+			#timebar {
+				position: absolute; left: 0; right: 0; bottom: 0; height: 40px;
+				background: #11161c; color: #cdd6e0; z-index: 1;
+				display: flex; align-items: center; gap: 10px; padding: 0 12px;
+				box-sizing: border-box; font-size: 12px; font-variant-numeric: tabular-nums;
+			}
+			#timebar button {
+				background: #2c3a47; color: #e6edf3; border: none; border-radius: 5px;
+				width: 30px; height: 24px; font-size: 13px; cursor: pointer; line-height: 1;
+			}
+			#timebar button:hover { background: #3a4c5c; }
+			#scrub { flex: 1; accent-color: #2c7bb6; cursor: pointer; }
+			#speed { width: 110px; accent-color: #6aa0c8; cursor: pointer; }
+			#tnow { color: #ffc83c; font-weight: 600; min-width: 168px; text-align: right; }
+			.tlabel { color: #8aa0b2; white-space: nowrap; }
+			#hud {
+				position: absolute; top: 12px; left: 12px; z-index: 1;
+				background: rgba(255, 255, 255, 0.92); padding: 10px 12px;
+				border-radius: 8px; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+				font-size: 13px; line-height: 1.5; max-width: 320px;
+			}
+			#hud h1 { font-size: 14px; margin: 0 0 4px; }
+			#status { color: #555; }
+		</style>
+	</head>
+	<body>
+		<div id="map"></div>
+		<div id="timebar">
+			<button id="playpause" title="Play / pause">⏸</button>
+			<span id="tstart" class="tlabel"></span>
+			<input id="scrub" type="range" min="0" max="1000" value="0" step="1" title="Time" />
+			<span id="tend" class="tlabel"></span>
+			<span id="tnow"></span>
+			<span class="tlabel">pace</span>
+			<input id="speed" type="range" min="0" max="1000" value="500" step="1" title="Playback pace" />
+		</div>
+		<div id="hud">
+			<h1>MF Stream — animated fleet</h1>
+			<div id="status">starting…</div>
+			<div>ships: <span id="count">0</span></div>
+		</div>
+		<script type="module" src="/src/fleet.ts"></script>
+	</body>
+</html>

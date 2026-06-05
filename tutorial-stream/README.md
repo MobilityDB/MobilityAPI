@@ -1,6 +1,6 @@
 # MobilityAPI — MF Stream tutorial (continuous queries)
 
-`stream_tutorial.ipynb` walks through the streaming half of MobilityAPI: the
+`tutorial.ipynb` walks through the streaming half of MobilityAPI: the
 [OGC API – Moving Features – Part 4 (Stream Extension)](https://www.opengis.net/spec/ogcapi-movingfeatures-4/1.0)
 continuous-query endpoints, served by the same Go tier over MobilityDB/MEOS. A
 continuous query applies a **lifted** scalar operation (`ln`, `exp`, `×`, `+`, …)

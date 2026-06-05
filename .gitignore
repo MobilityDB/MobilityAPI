@@ -2,3 +2,5 @@
 mfapi-go
 MobilityAPI-go
 *.log
+mfapi
+mfapi-meos

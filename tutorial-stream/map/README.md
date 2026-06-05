@@ -44,5 +44,16 @@ browser:  positions → TGeomPoint (MEOS.js/WASM) → valueAtTimestamp(clock)
 ```
 
 The tier holds no MEOS and streams only the stored positions; the browser does
-the temporal interpolation. A property query (speed → knots, or a windowed
-aggregate) can be layered on as a live overlay.
+the temporal interpolation.
+
+## Windowed-aggregate overlay
+
+The page also registers a windowed-aggregate query on a property (`speed` by
+default, `AVG` over a `COUNT` window) and shows the live value in the HUD,
+colouring the dot by it. The overlay degrades silently if the property is absent
+or the tier was built without the in-process aggregate engine (`-tags meos`) —
+the position animation still runs. Configure it with query parameters:
+
+```
+?aggProp=<property>&agg=AVG|SUM|MIN|MAX|COUNT&window=<count>
+```

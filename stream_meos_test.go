@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"testing"
 	"time"
@@ -94,6 +95,37 @@ func TestMeosWindowAggregate(t *testing.T) {
 			t.Errorf("%s: no window result", c.agg)
 		}
 		cancel()
+	}
+}
+
+// A HOPPING window emits one aggregate per hop over the last span — overlapping.
+func TestMeosHoppingWindow(t *testing.T) {
+	e, _ := defaultStreamEngine()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	src := make(chan Instant, 8)
+	h, err := e.Submit(ctx, QuerySpec{
+		Agg:    "AVG",
+		Window: Window{Type: "HOPPING", Size: 3, Unit: "SECONDS", Hop: 1, HopUnit: "SECONDS"},
+	}, src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, v := range []float64{10, 20, 30, 40, 50} {
+		src <- Instant{T: fmt.Sprintf("2026-01-01T00:00:0%dZ", i), V: v}
+	}
+	// Five records one second apart yield four hop boundaries; the fourth window
+	// covers [20, 30, 40] → AVG 30 over 3 records.
+	var last Event
+	for i := 0; i < 4; i++ {
+		select {
+		case last = <-h.Results():
+		case <-time.After(5 * time.Second):
+			t.Fatalf("only %d window results", i)
+		}
+	}
+	if last["count"].(int) != 3 || math.Abs(last["value"].(float64)-30) > 1e-9 {
+		t.Errorf("4th hopping window = value %v count %v, want 30 / 3", last["value"], last["count"])
 	}
 }
 

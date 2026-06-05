@@ -53,11 +53,14 @@ type QuerySpec struct {
 }
 
 // Window is a continuous-query window (OGC MF Part 4). COUNT groups a fixed
-// number of records; TUMBLING groups a fixed time span.
+// number of records; TUMBLING groups a fixed, non-overlapping time span;
+// HOPPING groups a fixed time span that advances by a shorter hop (overlapping).
 type Window struct {
-	Type string // "COUNT" or "TUMBLING"
-	Size int    // record count (COUNT) or duration (TUMBLING)
-	Unit string // time unit for TUMBLING (SECONDS, MINUTES, HOURS)
+	Type    string // "COUNT", "TUMBLING" or "HOPPING"
+	Size    int    // record count (COUNT) or duration (TUMBLING/HOPPING)
+	Unit    string // time unit for TUMBLING/HOPPING (SECONDS, MINUTES, HOURS)
+	Hop     int    // advance for HOPPING
+	HopUnit string // time unit for the hop
 }
 
 // aggregations is the catalogue of window aggregations exposed for a TReal
@@ -453,9 +456,11 @@ func postQuery(w http.ResponseWriter, r *http.Request) {
 		Arg         *float64 `json:"arg"`
 		Aggregation string   `json:"aggregation"`
 		Window      struct {
-			Type string `json:"type"`
-			Size int    `json:"size"`
-			Unit string `json:"unit"`
+			Type    string `json:"type"`
+			Size    int    `json:"size"`
+			Unit    string `json:"unit"`
+			Hop     int    `json:"hop"`
+			HopUnit string `json:"hopUnit"`
 		} `json:"window"`
 		Live       bool `json:"live"`
 		IntervalMs int  `json:"intervalMs"`
@@ -476,16 +481,23 @@ func postQuery(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		wtype := strings.ToUpper(strings.TrimSpace(body.Window.Type))
-		if wtype != "COUNT" && wtype != "TUMBLING" {
-			httpErr(w, 400, "window type must be COUNT or TUMBLING")
+		if wtype != "COUNT" && wtype != "TUMBLING" && wtype != "HOPPING" {
+			httpErr(w, 400, "window type must be COUNT, TUMBLING or HOPPING")
 			return
 		}
 		if body.Window.Size <= 0 {
 			httpErr(w, 400, "window size must be a positive integer")
 			return
 		}
+		if wtype == "HOPPING" && body.Window.Hop <= 0 {
+			httpErr(w, 400, "a HOPPING window requires a positive hop")
+			return
+		}
 		spec.Agg = agg
-		spec.Window = Window{Type: wtype, Size: body.Window.Size, Unit: strings.ToUpper(body.Window.Unit)}
+		spec.Window = Window{
+			Type: wtype, Size: body.Window.Size, Unit: strings.ToUpper(body.Window.Unit),
+			Hop: body.Window.Hop, HopUnit: strings.ToUpper(body.Window.HopUnit),
+		}
 	} else {
 		// lifted transform
 		op := strings.ToLower(strings.TrimSpace(body.Operation))

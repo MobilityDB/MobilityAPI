@@ -70,7 +70,7 @@ WHERE Latitude  BETWEEN 40.18 AND 84.73
 -- --- 3. One report per (vessel, instant) -----------------------------------
 DROP TABLE IF EXISTS AISClean;
 CREATE TABLE AISClean AS
-SELECT DISTINCT ON (MMSI, T) MMSI, T, Name, Geom, SOG
+SELECT DISTINCT ON (MMSI, T) MMSI, T, Name, Geom, SOG, ShipType
 FROM AISInput
 WHERE Geom IS NOT NULL
 ORDER BY MMSI, T;
@@ -80,10 +80,11 @@ ORDER BY MMSI, T;
 -- selection of both tutorials) are vessels that actually move.
 DROP TABLE IF EXISTS ships;
 CREATE TABLE ships AS
-SELECT row_number() OVER (ORDER BY length(trip) DESC, mmsi)::int AS id, mmsi, name, trip
+SELECT row_number() OVER (ORDER BY length(trip) DESC, mmsi)::int AS id, mmsi, name, ship_type, trip
 FROM (
   SELECT MMSI AS mmsi,
          MIN(Name) FILTER (WHERE Name IS NOT NULL) AS name,
+         COALESCE(MIN(ShipType) FILTER (WHERE ShipType IS NOT NULL AND ShipType <> 'Undefined'), 'Other') AS ship_type,
          tgeompointSeqSetGaps(array_agg(tgeompoint(Geom, T) ORDER BY T),
                               maxt := (:'gap')::interval) AS trip
   FROM AISClean

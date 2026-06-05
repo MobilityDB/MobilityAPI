@@ -23,6 +23,40 @@ const params = new URLSearchParams(location.search);
 const CID = params.get('cid') ?? 'stream_demo';
 const FID = params.get('fid') ?? '1';
 const INTERVAL_MS = Number(params.get('intervalMs') ?? 500);
+// Optional windowed-aggregate overlay: a property aggregated over a COUNT window.
+const AGG_PROP = params.get('aggProp') ?? 'speed';
+const AGG = (params.get('agg') ?? 'AVG').toUpperCase();
+const WSIZE = Number(params.get('window') ?? 5);
+
+const aggLineEl = document.getElementById('aggLine')!;
+const aggEl = document.getElementById('agg')!;
+const aggNameEl = document.getElementById('aggName')!;
+const aggPropEl = document.getElementById('aggProp')!;
+
+// The latest window aggregate, used to colour the moving dot.
+let latestAgg: number | null = null;
+let aggLo = Infinity;
+let aggHi = -Infinity;
+
+// Blue → yellow → red ramp over the observed aggregate range.
+function aggColor(v: number): [number, number, number] {
+	if (!Number.isFinite(aggLo) || aggHi <= aggLo) return [215, 25, 28];
+	const x = Math.max(0, Math.min(1, (v - aggLo) / (aggHi - aggLo)));
+	const stops: Array<[number, [number, number, number]]> = [
+		[0, [44, 123, 182]],
+		[0.5, [255, 200, 60]],
+		[1, [215, 25, 28]],
+	];
+	for (let i = 1; i < stops.length; i++) {
+		if (x <= stops[i][0]) {
+			const [x0, c0] = stops[i - 1];
+			const [x1, c1] = stops[i];
+			const f = (x - x0) / (x1 - x0 || 1);
+			return [0, 1, 2].map(k => Math.round(c0[k] + (c1[k] - c0[k]) * f)) as [number, number, number];
+		}
+	}
+	return stops[stops.length - 1][1];
+}
 
 const EPOCH_2000_MS = Date.UTC(2000, 0, 1);
 const toTstz = (ms: number): number => Math.round((ms - EPOCH_2000_MS) * 1000);
@@ -107,6 +141,11 @@ async function main(): Promise<void> {
 		statusEl.textContent = 'stream error (is the tier running?)';
 	};
 
+	// Optional overlay: a windowed aggregate of a property, shown live and used to
+	// colour the dot. Degrades silently if the property or the aggregate engine is
+	// unavailable (the position animation still runs).
+	void setupAggOverlay();
+
 	// A clock loops over the trajectory's time span; MEOS interpolates the
 	// position at the clock, so the dot moves smoothly between the vertices.
 	const PERIOD_MS = 8000;
@@ -134,7 +173,7 @@ async function main(): Promise<void> {
 							getPosition: (d: { position: [number, number] }) => d.position,
 							getRadius: 7,
 							radiusUnits: 'pixels',
-							getFillColor: [215, 25, 28],
+							getFillColor: latestAgg != null ? aggColor(latestAgg) : [215, 25, 28],
 						}),
 					],
 				});
@@ -143,6 +182,34 @@ async function main(): Promise<void> {
 		requestAnimationFrame(frame);
 	}
 	requestAnimationFrame(frame);
+}
+
+// setupAggOverlay registers a windowed-aggregate query on a property and streams
+// its results into the HUD. It returns quietly if the property is absent or the
+// aggregate engine is not built in (the map still animates the position).
+async function setupAggOverlay(): Promise<void> {
+	const res = await fetch(`/collections/${CID}/items/${FID}/tproperties/${AGG_PROP}/queries`, {
+		method: 'POST',
+		headers: { 'content-type': 'application/json' },
+		body: JSON.stringify({
+			aggregation: AGG,
+			window: { type: 'COUNT', size: WSIZE },
+			intervalMs: INTERVAL_MS,
+		}),
+	}).catch(() => null);
+	if (!res || !res.ok) return;
+	const link = (await res.json()) as { channel: string };
+	aggNameEl.textContent = AGG;
+	aggPropEl.textContent = AGG_PROP;
+	aggLineEl.style.display = '';
+	const es = new EventSource(link.channel);
+	es.addEventListener('instant', ev => {
+		const d = JSON.parse((ev as MessageEvent).data) as { value: number };
+		latestAgg = d.value;
+		aggLo = Math.min(aggLo, d.value);
+		aggHi = Math.max(aggHi, d.value);
+		aggEl.textContent = d.value.toFixed(2);
+	});
 }
 
 main().catch(e => {

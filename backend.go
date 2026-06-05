@@ -60,6 +60,14 @@ func openBackend(dsn string) (Backend, error) {
 		return nil, err
 	}
 	cfg.MaxConns = int32(envInt("MFAPI_MAXCONNS", 16))
+	// AIS and other moving-feature timestamps are UTC; pin every connection to
+	// UTC and ISO datestyle so asMFJSON serializes ISO 8601 UTC datetimes
+	// regardless of the server's locale.
+	if cfg.ConnConfig.RuntimeParams == nil {
+		cfg.ConnConfig.RuntimeParams = map[string]string{}
+	}
+	cfg.ConnConfig.RuntimeParams["timezone"] = "UTC"
+	cfg.ConnConfig.RuntimeParams["datestyle"] = "ISO, YMD"
 	pool, err := pgxpool.NewWithConfig(context.Background(), cfg)
 	if err != nil {
 		return nil, err

@@ -85,6 +85,14 @@ func main() {
 		log.Fatal("db ping: ", err)
 	}
 
+	if broker := os.Getenv("MFAPI_MQTT_BROKER"); broker != "" {
+		if _, err := startMQTTIngest(broker, "mfapi-"+strconv.Itoa(os.Getpid())); err != nil {
+			log.Printf("MQTT ingestion disabled: %v", err)
+		} else {
+			log.Printf("MQTT ingestion on %s (topic mfapi/<cid>/<fid>/<pname>)", broker)
+		}
+	}
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) { writeRaw(w, 200, `{"status":"ok"}`) })
 	mux.HandleFunc("GET /", landing)

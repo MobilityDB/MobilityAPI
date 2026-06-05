@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -64,10 +65,21 @@ type QueryHandle interface {
 	Stop() error
 }
 
-// makeEngine builds the configured engine; defaultStreamEngine is defined per
-// build tag (the cgo MEOS engine under -tags meos, a stub otherwise). It is a
-// var so tests can inject a fake engine.
-var makeEngine = defaultStreamEngine
+// makeEngine builds the configured engine; it is a var so tests can inject a
+// fake engine.
+var makeEngine = selectEngine
+
+// selectEngine picks the streaming engine from MFAPI_STREAM_ENGINE: "flink"
+// runs queries as Flink DataStream jobs (cluster engine); anything else uses the
+// in-process meos-local engine (defaultStreamEngine, defined per build tag — the
+// cgo MEOS engine under -tags meos, a stub otherwise). Both sit behind the same
+// StreamEngine seam.
+func selectEngine() (StreamEngine, error) {
+	if strings.EqualFold(os.Getenv("MFAPI_STREAM_ENGINE"), "flink") {
+		return newFlinkEngine()
+	}
+	return defaultStreamEngine()
+}
 
 var (
 	engMu   sync.Mutex

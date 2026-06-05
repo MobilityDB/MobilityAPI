@@ -13,6 +13,18 @@ Streams, and Spark Structured Streaming engines once selected. Those plug into
 the `StreamEngine` seam exactly as PostgreSQL, DuckDB, and Spark plug into the
 request–response `Backend` seam.
 
+## Selecting the engine
+
+The engine is chosen where the tier starts, not in the notebook:
+
+- default — the in-process `meos-local` engine (`-tags meos`, libmeos linked).
+- `MFAPI_STREAM_ENGINE=flink` — run each continuous query as a Flink DataStream
+  job; the tier itself needs no MEOS. See [`flink/README.md`](flink/README.md) for
+  the bridge job and its configuration (`MFAPI_FLINK_CMD`, `MFAPI_FLINK_LIBPATH`).
+
+A Kafka Streams or Spark Structured Streaming engine plugs into the same seam
+through the same line-protocol contract.
+
 ## Prerequisites
 
 - The Go tier built **with the streaming engine** and reachable on

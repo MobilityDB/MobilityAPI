@@ -14,7 +14,7 @@ type fakeEngine struct{}
 func (fakeEngine) Name() string { return "fake" }
 
 func (fakeEngine) Submit(ctx context.Context, spec QuerySpec, source <-chan Instant) (QueryHandle, error) {
-	h := &fakeHandle{results: make(chan Instant, 16), status: "running"}
+	h := &fakeHandle{results: make(chan Event, 16), status: "running"}
 	go func() {
 		defer close(h.results)
 		for {
@@ -25,8 +25,9 @@ func (fakeEngine) Submit(ctx context.Context, spec QuerySpec, source <-chan Inst
 				if !ok {
 					return
 				}
+				ev := Event{"datetime": in.T, "value": in.V + spec.Arg, "property": spec.Pname, "operation": spec.Op}
 				select {
-				case h.results <- Instant{T: in.T, V: in.V + spec.Arg}:
+				case h.results <- ev:
 				case <-ctx.Done():
 					return
 				}
@@ -37,13 +38,13 @@ func (fakeEngine) Submit(ctx context.Context, spec QuerySpec, source <-chan Inst
 }
 
 type fakeHandle struct {
-	results chan Instant
+	results chan Event
 	status  string
 }
 
-func (h *fakeHandle) Results() <-chan Instant { return h.results }
-func (h *fakeHandle) Status() string          { return h.status }
-func (h *fakeHandle) Stop() error             { return nil }
+func (h *fakeHandle) Results() <-chan Event { return h.results }
+func (h *fakeHandle) Status() string        { return h.status }
+func (h *fakeHandle) Stop() error           { return nil }
 
 // liftedOps marks the operations needing a scalar operand; the rest are unary.
 func TestLiftedOpsCatalogue(t *testing.T) {

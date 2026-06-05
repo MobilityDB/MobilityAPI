@@ -37,7 +37,9 @@ type Instant struct {
 	V float64 `json:"value"`
 }
 
-// QuerySpec is an engine-neutral continuous-query definition.
+// QuerySpec is an engine-neutral continuous-query definition. A property query
+// is either a transform (Op set) or a windowed aggregate (Agg + Window set); a
+// geometry query streams positions.
 type QuerySpec struct {
 	Kind     string // "transform" (a temporal property) or "geometry" (the moving point)
 	CID      string
@@ -45,7 +47,34 @@ type QuerySpec struct {
 	Pname    string
 	Op       string        // a lifted scalar operation, e.g. "ln" or "mul"
 	Arg      float64       // operand for scalar ops (add/sub/mul/div); ignored otherwise
+	Agg      string        // a window aggregation, e.g. "AVG" or "MAX"
+	Window   Window        // the window over which Agg is computed
 	Interval time.Duration // pacing between emitted records
+}
+
+// Window is a continuous-query window (OGC MF Part 4). COUNT groups a fixed
+// number of records; TUMBLING groups a fixed time span.
+type Window struct {
+	Type string // "COUNT" or "TUMBLING"
+	Size int    // record count (COUNT) or duration (TUMBLING)
+	Unit string // time unit for TUMBLING (SECONDS, MINUTES, HOURS)
+}
+
+// aggregations is the catalogue of window aggregations exposed for a TReal
+// property. Each maps to a MEOS scalar accessor over the window's values
+// (tnumber_avg_value, tfloat_min_value/max_value, temporal_num_instants); SUM is
+// the sum of the values MEOS returns.
+var aggregations = map[string]bool{
+	"COUNT": true, "SUM": true, "AVG": true, "MIN": true, "MAX": true,
+}
+
+func supportedAggs() string {
+	keys := make([]string, 0, len(aggregations))
+	for k := range aggregations {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return strings.Join(keys, ", ")
 }
 
 // StreamEngine is the engine-neutral streaming seam — the streaming analogue of
@@ -56,12 +85,13 @@ type StreamEngine interface {
 	Submit(ctx context.Context, spec QuerySpec, source <-chan Instant) (QueryHandle, error)
 }
 
-// QueryHandle is a running continuous query on some engine. Results is closed
-// when the query ends. Stop releases any engine-side resources (for cluster
-// engines, cancels the deployed job); the control plane also cancels the
+// QueryHandle is a running continuous query on some engine. Results emits the
+// engine's output Events (a transformed instant or a window aggregate) and is
+// closed when the query ends. Stop releases any engine-side resources (for
+// cluster engines, cancels the deployed job); the control plane also cancels the
 // context, which is how the local engine stops.
 type QueryHandle interface {
-	Results() <-chan Instant
+	Results() <-chan Event
 	Status() string
 	Stop() error
 }
@@ -253,27 +283,15 @@ func (r *streamRegistry) register(spec QuerySpec, handle QueryHandle, events <-c
 	return cq
 }
 
-// submit runs a transform query on the engine and adapts its instant results
-// into the Event stream the control plane fans out.
+// submit runs a transform or aggregate query on the engine and fans its output
+// Events out.
 func (r *streamRegistry) submit(ctx context.Context, cancel context.CancelFunc, eng StreamEngine, spec QuerySpec, source <-chan Instant) (*contQuery, error) {
 	h, err := eng.Submit(ctx, spec, source)
 	if err != nil {
 		cancel()
 		return nil, err
 	}
-	events := make(chan Event, 64)
-	go func() {
-		defer close(events)
-		for in := range h.Results() {
-			ev := Event{"datetime": in.T, "value": in.V, "property": spec.Pname, "operation": spec.Op}
-			select {
-			case events <- ev:
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
-	return r.register(spec, h, events, cancel), nil
+	return r.register(spec, h, h.Results(), cancel), nil
 }
 
 func (r *streamRegistry) get(id string) *contQuery {
@@ -431,30 +449,58 @@ func postQuery(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var body struct {
-		Operation  string   `json:"operation"`
-		Arg        *float64 `json:"arg"`
-		IntervalMs int      `json:"intervalMs"`
+		Operation   string   `json:"operation"`
+		Arg         *float64 `json:"arg"`
+		Aggregation string   `json:"aggregation"`
+		Window      struct {
+			Type string `json:"type"`
+			Size int    `json:"size"`
+			Unit string `json:"unit"`
+		} `json:"window"`
+		IntervalMs int `json:"intervalMs"`
 	}
 	if r.Body != nil {
 		json.NewDecoder(r.Body).Decode(&body)
 	}
-	op := strings.ToLower(strings.TrimSpace(body.Operation))
-	info, ok := liftedOps[op]
-	if !ok {
-		httpErr(w, 400, "unknown operation: "+body.Operation+" (supported: "+supportedOps()+")")
-		return
-	}
-	if info.needsArg && body.Arg == nil {
-		httpErr(w, 400, "operation "+op+" requires a scalar \"arg\"")
-		return
-	}
-	arg := 0.0
-	if body.Arg != nil {
-		arg = *body.Arg
-	}
 	interval := time.Duration(body.IntervalMs) * time.Millisecond
 	if interval <= 0 {
 		interval = 500 * time.Millisecond
+	}
+
+	spec := QuerySpec{CID: cid, FID: fid, Pname: name, Interval: interval}
+	if agg := strings.ToUpper(strings.TrimSpace(body.Aggregation)); agg != "" {
+		// windowed aggregation
+		if !aggregations[agg] {
+			httpErr(w, 400, "unknown aggregation: "+body.Aggregation+" (supported: "+supportedAggs()+")")
+			return
+		}
+		wtype := strings.ToUpper(strings.TrimSpace(body.Window.Type))
+		if wtype != "COUNT" && wtype != "TUMBLING" {
+			httpErr(w, 400, "window type must be COUNT or TUMBLING")
+			return
+		}
+		if body.Window.Size <= 0 {
+			httpErr(w, 400, "window size must be a positive integer")
+			return
+		}
+		spec.Agg = agg
+		spec.Window = Window{Type: wtype, Size: body.Window.Size, Unit: strings.ToUpper(body.Window.Unit)}
+	} else {
+		// lifted transform
+		op := strings.ToLower(strings.TrimSpace(body.Operation))
+		info, ok := liftedOps[op]
+		if !ok {
+			httpErr(w, 400, "unknown operation: "+body.Operation+" (supported: "+supportedOps()+")")
+			return
+		}
+		if info.needsArg && body.Arg == nil {
+			httpErr(w, 400, "operation "+op+" requires a scalar \"arg\"")
+			return
+		}
+		spec.Op = op
+		if body.Arg != nil {
+			spec.Arg = *body.Arg
+		}
 	}
 
 	eng, err := streamEngine()
@@ -470,7 +516,6 @@ func postQuery(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, 400, err.Error())
 		return
 	}
-	spec := QuerySpec{CID: cid, FID: fid, Pname: name, Op: op, Arg: arg, Interval: interval}
 	cq, err := streamReg.submit(qctx, qcancel, eng, spec, src)
 	if err != nil {
 		httpErr(w, 500, err.Error())

@@ -19,12 +19,14 @@ http://www.opengis.net/spec/ogcapi-movingfeatures-4/1.0/conf/cquery
 
 ## Aggregations
 
-`TemporalProperty` `TReal` — **met**: `COUNT, SUM, AVG, MIN, MAX`, computed
-through MEOS (`temporal_num_instants`, `tfloat_min_value`/`tfloat_max_value`,
-`tnumber_avg_value`, and the value sum).
+`TemporalProperty` — **met** for all scalar types, computed through MEOS:
 
-`TText` (`COUNT, COUNT_DISTINCT`), `TBoolean` (`ANY, ALL, …`), and the
-`TemporalPrimitiveGeometry` operations of Table 7 (`LENGTH, AREA, TO_TRAJ, …`)
+- `TReal` / `TInt`: `COUNT, SUM, AVG, MIN, MAX` (`temporal_num_instants`,
+  `tfloat_min_value`/`tfloat_max_value`, `tnumber_avg_value`, value sum).
+- `TText`: `COUNT, COUNT_DISTINCT` (`ttext_values`).
+- `TBoolean`: `COUNT, ANY, ALL, COUNT_TRUE, COUNT_FALSE` (`tbool_values`).
+
+The `TemporalPrimitiveGeometry` operations of Table 7 (`LENGTH, AREA, TO_TRAJ, …`)
 are **not yet** exposed.
 
 ## Lifecycle and delivery

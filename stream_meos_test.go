@@ -98,6 +98,46 @@ func TestMeosWindowAggregate(t *testing.T) {
 	}
 }
 
+// Text and boolean aggregations over a COUNT window, through MEOS.
+func TestMeosTextBoolAggregate(t *testing.T) {
+	e, _ := defaultStreamEngine()
+
+	// TText COUNT_DISTINCT over ["a","b","a"] = 2
+	ctx, cancel := context.WithCancel(context.Background())
+	src := make(chan Instant, 3)
+	h, err := e.Submit(ctx, QuerySpec{Ptype: "TText", Agg: "COUNT_DISTINCT", Window: Window{Type: "COUNT", Size: 3}}, src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range []string{"a", "b", "a"} {
+		src <- Instant{T: "2026-01-01T00:00:00Z", S: s}
+	}
+	if got := (<-h.Results())["value"]; got != 2.0 {
+		t.Errorf("COUNT_DISTINCT = %v, want 2", got)
+	}
+	cancel()
+
+	// TBool ANY / ALL / COUNT_TRUE over [t, f, f]
+	for _, c := range []struct {
+		agg  string
+		want any
+	}{{"ANY", true}, {"ALL", false}, {"COUNT_TRUE", 1.0}} {
+		ctx, cancel := context.WithCancel(context.Background())
+		src := make(chan Instant, 3)
+		h, err := e.Submit(ctx, QuerySpec{Ptype: "TBool", Agg: c.agg, Window: Window{Type: "COUNT", Size: 3}}, src)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, s := range []string{"t", "f", "f"} {
+			src <- Instant{T: "2026-01-01T00:00:00Z", S: s}
+		}
+		if got := (<-h.Results())["value"]; got != c.want {
+			t.Errorf("%s = %v, want %v", c.agg, got, c.want)
+		}
+		cancel()
+	}
+}
+
 // A HOPPING window emits one aggregate per hop over the last span — overlapping.
 func TestMeosHoppingWindow(t *testing.T) {
 	e, _ := defaultStreamEngine()

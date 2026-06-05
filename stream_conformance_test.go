@@ -26,6 +26,27 @@ func TestConformanceDeclaresPart4(t *testing.T) {
 	t.Errorf("conformance does not declare the MF Part 4 cquery class %q", want)
 }
 
+// The API definition documents the continuous-query paths.
+func TestAPIDeclaresStreamingPaths(t *testing.T) {
+	rec := httptest.NewRecorder()
+	apiDoc(rec, httptest.NewRequest("GET", "/api", nil))
+	var doc struct {
+		Paths map[string]any `json:"paths"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &doc); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{
+		"/collections/{cid}/items/{fid}/tproperties/{pname}/queries",
+		"/collections/{cid}/items/{fid}/tproperties/{pname}/ingest",
+		"/collections/{cid}/items/{fid}/tgsequence/queries",
+	} {
+		if _, ok := doc.Paths[p]; !ok {
+			t.Errorf("API definition is missing the streaming path %q", p)
+		}
+	}
+}
+
 // The cquery link object carries the properties Requirement 1 mandates.
 func TestCqueryLinkShape(t *testing.T) {
 	cq := &contQuery{id: "q1", spec: QuerySpec{CID: "ships", FID: 7, Pname: "speed", Op: "mul"}}

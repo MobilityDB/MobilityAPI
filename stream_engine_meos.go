@@ -221,7 +221,7 @@ func hopSeconds(w Window) int64 {
 
 // emitWindow computes the aggregate over a closed window and emits it.
 func (h *meosHandle) emitWindow(ctx context.Context, spec QuerySpec, win []Instant) bool {
-	val, count, err := windowAggregate(spec.Agg, win)
+	val, count, err := windowAggregate(spec.Ptype, spec.Agg, win)
 	if err != nil {
 		h.setStatus("failed")
 		return false
@@ -320,7 +320,40 @@ func parseInstantText(s, t string) (Instant, error) {
 // The window's values are assembled into a discrete tfloat at synthetic, ordered
 // timestamps (the aggregate is value-based, so the times only order the records),
 // and the MEOS accessor for the aggregation is applied.
-func windowAggregate(agg string, win []Instant) (float64, int, error) {
+// windowAggregate computes one aggregation over a window's values through MEOS,
+// dispatching on the property type.
+func windowAggregate(ptype, agg string, win []Instant) (any, int, error) {
+	switch ptype {
+	case "TText":
+		return textAggregate(agg, win)
+	case "TBool":
+		return boolAggregate(agg, win)
+	default:
+		return numAggregate(agg, win)
+	}
+}
+
+// synthWindowText assembles a window's values into a discrete temporal literal
+// "{v0@t0, v1@t1, …}" at synthetic, ordered timestamps (the aggregate is
+// value-based, so the times only order the records). value renders each record.
+func synthWindowText(win []Instant, value func(Instant) string) string {
+	base := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
+	var b strings.Builder
+	b.WriteByte('{')
+	for i, in := range win {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		ts := base.Add(time.Duration(i)*time.Second).Format("2006-01-02 15:04:05") + "+00"
+		b.WriteString(value(in))
+		b.WriteByte('@')
+		b.WriteString(ts)
+	}
+	b.WriteByte('}')
+	return b.String()
+}
+
+func numAggregate(agg string, win []Instant) (any, int, error) {
 	base := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
 	var b strings.Builder
 	b.WriteByte('{')
@@ -365,6 +398,84 @@ func windowAggregate(agg string, win []Instant) (float64, int, error) {
 		return sum, n, nil
 	}
 	return 0, n, fmt.Errorf("unknown aggregation %q", agg)
+}
+
+// escapeText renders a text value as a quoted MEOS text literal.
+func escapeText(s string) string {
+	s = strings.ReplaceAll(s, "\\", "\\\\")
+	s = strings.ReplaceAll(s, "\"", "\\\"")
+	return "\"" + s + "\""
+}
+
+// textAggregate computes COUNT / COUNT_DISTINCT over a TText window.
+func textAggregate(agg string, win []Instant) (any, int, error) {
+	cs := C.CString(synthWindowText(win, func(in Instant) string { return escapeText(in.S) }))
+	defer C.free(unsafe.Pointer(cs))
+	t := C.ttext_in(cs)
+	if t == nil {
+		return nil, 0, fmt.Errorf("ttext_in failed for the window")
+	}
+	defer C.free(unsafe.Pointer(t))
+	n := int(C.temporal_num_instants(t))
+	switch agg {
+	case "COUNT":
+		return float64(n), n, nil
+	case "COUNT_DISTINCT":
+		var cnt C.int
+		arr := C.ttext_values(t, &cnt)
+		defer C.free(unsafe.Pointer(arr))
+		texts := unsafe.Slice(arr, int(cnt))
+		set := map[string]struct{}{}
+		for _, tx := range texts {
+			cstr := C.text_out(tx)
+			set[C.GoString(cstr)] = struct{}{}
+			C.free(unsafe.Pointer(cstr))
+			C.free(unsafe.Pointer(tx))
+		}
+		return float64(len(set)), n, nil
+	}
+	return nil, n, fmt.Errorf("unknown aggregation %q", agg)
+}
+
+// boolAggregate computes COUNT / ANY / ALL / COUNT_TRUE / COUNT_FALSE over a
+// TBool window.
+func boolAggregate(agg string, win []Instant) (any, int, error) {
+	cs := C.CString(synthWindowText(win, func(in Instant) string {
+		if in.S == "t" || in.S == "true" {
+			return "t"
+		}
+		return "f"
+	}))
+	defer C.free(unsafe.Pointer(cs))
+	t := C.tbool_in(cs)
+	if t == nil {
+		return nil, 0, fmt.Errorf("tbool_in failed for the window")
+	}
+	defer C.free(unsafe.Pointer(t))
+	n := int(C.temporal_num_instants(t))
+	var cnt C.int
+	arr := C.tbool_values(t, &cnt)
+	defer C.free(unsafe.Pointer(arr))
+	vals := unsafe.Slice((*byte)(unsafe.Pointer(arr)), int(cnt))
+	trueCount := 0
+	for _, v := range vals {
+		if v != 0 {
+			trueCount++
+		}
+	}
+	switch agg {
+	case "COUNT":
+		return float64(n), n, nil
+	case "COUNT_TRUE":
+		return float64(trueCount), n, nil
+	case "COUNT_FALSE":
+		return float64(n - trueCount), n, nil
+	case "ANY":
+		return trueCount > 0, n, nil
+	case "ALL":
+		return trueCount == n, n, nil
+	}
+	return nil, n, fmt.Errorf("unknown aggregation %q", agg)
 }
 
 // tumblingSpanSeconds converts a TUMBLING window size+unit into seconds.

@@ -31,10 +31,12 @@ import (
 
 // Instant is one stream record: a temporal-property value at a timestamp. The
 // timestamp is carried verbatim as its ISO-8601 string so it round-trips
-// through MEOS without a parse/format step.
+// through MEOS without a parse/format step. V holds a numeric value (TReal /
+// TInt); S holds a text value (TText) or "t"/"f" (TBool).
 type Instant struct {
 	T string  `json:"datetime"`
 	V float64 `json:"value"`
+	S string  `json:"-"`
 }
 
 // QuerySpec is an engine-neutral continuous-query definition. A property query
@@ -49,6 +51,7 @@ type QuerySpec struct {
 	Arg      float64       // operand for scalar ops (add/sub/mul/div); ignored otherwise
 	Agg      string        // a window aggregation, e.g. "AVG" or "MAX"
 	Window   Window        // the window over which Agg is computed
+	Ptype    string        // the property's OGC type (TReal | TInt | TText | TBool)
 	Interval time.Duration // pacing between emitted records
 }
 
@@ -63,17 +66,33 @@ type Window struct {
 	HopUnit string // time unit for the hop
 }
 
-// aggregations is the catalogue of window aggregations exposed for a TReal
-// property. Each maps to a MEOS scalar accessor over the window's values
-// (tnumber_avg_value, tfloat_min_value/max_value, temporal_num_instants); SUM is
-// the sum of the values MEOS returns.
-var aggregations = map[string]bool{
-	"COUNT": true, "SUM": true, "AVG": true, "MIN": true, "MAX": true,
+// aggByType is the catalogue of window aggregations valid per property type
+// (OGC MF Part 4 Table 6). Numeric aggregations use MEOS scalar accessors over
+// the window's values; text and boolean aggregations reduce the MEOS value
+// arrays.
+var aggByType = map[string]map[string]bool{
+	"TReal": {"COUNT": true, "SUM": true, "AVG": true, "MIN": true, "MAX": true},
+	"TInt":  {"COUNT": true, "SUM": true, "AVG": true, "MIN": true, "MAX": true},
+	"TText": {"COUNT": true, "COUNT_DISTINCT": true},
+	"TBool": {"COUNT": true, "ANY": true, "ALL": true, "COUNT_TRUE": true, "COUNT_FALSE": true},
 }
 
-func supportedAggs() string {
-	keys := make([]string, 0, len(aggregations))
-	for k := range aggregations {
+// aggregations is the union of all valid aggregation names (the engine validates
+// the name; the control plane validates it against the property type).
+var aggregations = func() map[string]bool {
+	all := map[string]bool{}
+	for _, m := range aggByType {
+		for k := range m {
+			all[k] = true
+		}
+	}
+	return all
+}()
+
+func supportedAggs(ptype string) string {
+	m := aggByType[ptype]
+	keys := make([]string, 0, len(m))
+	for k := range m {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
@@ -345,8 +364,9 @@ func cqueryLink(r *http.Request, cq *contQuery) map[string]any {
 	}
 }
 
-// parseInstantsMFJSON extracts the (timestamp, value) instants from a tfloat
-// MF-JSON document, handling both the flat form and a sequence set.
+// parseInstantsMFJSON extracts the (timestamp, value) instants from a temporal
+// MF-JSON document, handling both the flat form and a sequence set. A numeric
+// value lands in V; a text value in S; a boolean in S as "t"/"f".
 func parseInstantsMFJSON(b []byte) ([]Instant, error) {
 	var doc map[string]any
 	if err := json.Unmarshal(b, &doc); err != nil {
@@ -362,8 +382,20 @@ func parseInstantsMFJSON(b []byte) ([]Instant, error) {
 		}
 		for i := 0; i < n; i++ {
 			ts, _ := dts[i].(string)
-			v, _ := vals[i].(float64)
-			out = append(out, Instant{T: ts, V: v})
+			in := Instant{T: ts}
+			switch v := vals[i].(type) {
+			case float64:
+				in.V = v
+			case string:
+				in.S = v
+			case bool:
+				if v {
+					in.S = "t"
+				} else {
+					in.S = "f"
+				}
+			}
+			out = append(out, in)
 		}
 	}
 	if seqs, ok := doc["sequences"].([]any); ok {
@@ -381,13 +413,14 @@ func parseInstantsMFJSON(b []byte) ([]Instant, error) {
 	return out, nil
 }
 
-// replaySource loads the stored tfloat's instants once (through the DB seam —
-// data loading, not per-record work) and replays them as a paced, looping
-// stream, giving the continuous query an unbounded source to process.
-func replaySource(ctx context.Context, cid string, fid int, name string, interval time.Duration) (<-chan Instant, error) {
+// replaySource loads the stored property's instants once (through the DB seam —
+// data loading, not per-record work) from the column for its type and replays
+// them as a paced, looping stream, giving the continuous query an unbounded
+// source to process.
+func replaySource(ctx context.Context, cid string, fid int, name, col string, interval time.Duration) (<-chan Instant, error) {
 	var mf *string
 	err := db.QueryRow(ctx,
-		"SELECT asMFJSON(vfloat) FROM mf_tproperty WHERE cid=$1 AND fid=$2 AND name=$3",
+		"SELECT asMFJSON("+col+") FROM mf_tproperty WHERE cid=$1 AND fid=$2 AND name=$3",
 		cid, fid, name).Scan(&mf)
 	if err != nil {
 		return nil, err
@@ -446,10 +479,8 @@ func postQuery(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, 500, err.Error())
 		return
 	}
-	if tt, _ := tPropType(ptype); tt.ogc != "TReal" {
-		httpErr(w, 422, "continuous transforms are defined for TReal (tfloat) properties; "+name+" is "+ptype)
-		return
-	}
+	tt, _ := tPropType(ptype)
+	ogc := tt.ogc
 
 	var body struct {
 		Operation   string   `json:"operation"`
@@ -473,11 +504,11 @@ func postQuery(w http.ResponseWriter, r *http.Request) {
 		interval = 500 * time.Millisecond
 	}
 
-	spec := QuerySpec{CID: cid, FID: fid, Pname: name, Interval: interval}
+	spec := QuerySpec{CID: cid, FID: fid, Pname: name, Ptype: ogc, Interval: interval}
 	if agg := strings.ToUpper(strings.TrimSpace(body.Aggregation)); agg != "" {
-		// windowed aggregation
-		if !aggregations[agg] {
-			httpErr(w, 400, "unknown aggregation: "+body.Aggregation+" (supported: "+supportedAggs()+")")
+		// windowed aggregation, valid per property type
+		if !aggByType[ogc][agg] {
+			httpErr(w, 400, "aggregation "+body.Aggregation+" is not defined for "+ogc+" (supported: "+supportedAggs(ogc)+")")
 			return
 		}
 		wtype := strings.ToUpper(strings.TrimSpace(body.Window.Type))
@@ -499,7 +530,11 @@ func postQuery(w http.ResponseWriter, r *http.Request) {
 			Hop: body.Window.Hop, HopUnit: strings.ToUpper(body.Window.HopUnit),
 		}
 	} else {
-		// lifted transform
+		// lifted transform — defined for TReal (tfloat) properties
+		if ogc != "TReal" {
+			httpErr(w, 422, "continuous transforms are defined for TReal (tfloat) properties; "+name+" is "+ptype)
+			return
+		}
 		op := strings.ToLower(strings.TrimSpace(body.Operation))
 		info, ok := liftedOps[op]
 		if !ok {
@@ -528,7 +563,7 @@ func postQuery(w http.ResponseWriter, r *http.Request) {
 		// the producer pushes records to …/ingest; this query processes them live
 		src = live.subscribe(qctx, liveKey(cid, fid, name))
 	} else {
-		src, err = replaySource(qctx, cid, fid, name, interval)
+		src, err = replaySource(qctx, cid, fid, name, tt.col, interval)
 		if err != nil {
 			qcancel()
 			httpErr(w, 400, err.Error())

@@ -104,6 +104,7 @@ func main() {
 	mux.HandleFunc("PUT /collections/{cid}", putCollection)
 	mux.HandleFunc("DELETE /collections/{cid}", deleteCollection)
 	mux.HandleFunc("GET /collections/{cid}/trajectories", trajectories)
+	mux.HandleFunc("GET /collections/{cid}/timeseries", timeseries)
 	mux.HandleFunc("GET /collections/{cid}/items", streamItems)
 	mux.HandleFunc("GET /collections/{cid}/items/{fid}", getItem)
 	mux.HandleFunc("POST /collections/{cid}/items", postItem)

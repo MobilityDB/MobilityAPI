@@ -24,6 +24,7 @@ const playBtn = document.getElementById('playpause')!;
 const tnowEl = document.getElementById('tnow')!;
 const tstartEl = document.getElementById('tstart')!;
 const tendEl = document.getElementById('tend')!;
+const chartCanvas = document.getElementById('chart') as HTMLCanvasElement;
 
 const params = new URLSearchParams(location.search);
 const CID = params.get('cid') ?? 'ships';
@@ -67,6 +68,70 @@ function parsePoint(wkt: string): [number, number] | null {
 const sliderToPlayback = (v: number) => 180000 - (v / 1000) * 165000;   // 180 s (slow) … 15 s (fast)
 const yieldToBrowser = () => new Promise(r => setTimeout(r, 0));
 
+// --- evolving chart: average speed over ground by ship type, swept by the clock ---
+const SHIPTYPE_COLOR: Record<string, [number, number, number]> = {
+	Cargo: [44, 123, 182], Tanker: [215, 25, 28], Passenger: [77, 175, 74],
+	Fishing: [255, 160, 40], Tug: [152, 78, 163], Pilot: [120, 190, 210],
+	HSC: [240, 110, 200], Dredging: [160, 140, 90], SAR: [230, 200, 50],
+	Military: [110, 120, 130], Pleasure: [90, 200, 160], Sailing: [200, 180, 90],
+	Towing: [180, 120, 70], Other: [120, 130, 140],
+};
+interface ChartSeries { type: string; color: [number, number, number]; pts: { ms: number; v: number }[]; }
+let chartSeries: ChartSeries[] = [];
+let chartMaxV = 1;
+
+// draw the chart each frame: full curves faint, the portion up to `clockMs` bold,
+// a playhead at the current time — the animated sibling of the static category chart
+function drawChart(clockMs: number, tminMs: number, tmaxMs: number): void {
+	const dpr = window.devicePixelRatio || 1;
+	const W = chartCanvas.clientWidth, H = chartCanvas.clientHeight;
+	if (chartCanvas.width !== W * dpr || chartCanvas.height !== H * dpr) {
+		chartCanvas.width = W * dpr; chartCanvas.height = H * dpr;
+	}
+	const ctx = chartCanvas.getContext('2d')!;
+	ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+	ctx.clearRect(0, 0, W, H);
+	if (!chartSeries.length || tmaxMs <= tminMs) return;
+	const padL = 34, padR = 8, padT = 20, padB = 14;
+	const xOf = (ms: number) => padL + ((ms - tminMs) / (tmaxMs - tminMs)) * (W - padL - padR);
+	const yOf = (v: number) => padT + (1 - v / chartMaxV) * (H - padT - padB);
+	// gridlines + y labels
+	ctx.strokeStyle = '#26303a'; ctx.fillStyle = '#5b6b78'; ctx.font = '10px system-ui'; ctx.lineWidth = 1;
+	for (let k = 0; k <= 2; k++) {
+		const v = (chartMaxV / 2) * k, y = yOf(v);
+		ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(W - padR, y); ctx.stroke();
+		ctx.fillText(v.toFixed(0), 6, y + 3);
+	}
+	const px = xOf(clockMs);
+	for (const s of chartSeries) {
+		const col = `rgb(${s.color[0]},${s.color[1]},${s.color[2]})`;
+		// faint full curve
+		ctx.strokeStyle = `rgba(${s.color[0]},${s.color[1]},${s.color[2]},0.25)`; ctx.lineWidth = 1;
+		ctx.beginPath();
+		s.pts.forEach((p, i) => (i ? ctx.lineTo(xOf(p.ms), yOf(p.v)) : ctx.moveTo(xOf(p.ms), yOf(p.v))));
+		ctx.stroke();
+		// bold up to the clock
+		ctx.strokeStyle = col; ctx.lineWidth = 1.8; ctx.beginPath();
+		let started = false;
+		for (const p of s.pts) {
+			if (p.ms > clockMs) break;
+			const x = xOf(p.ms), y = yOf(p.v);
+			started ? ctx.lineTo(x, y) : ctx.moveTo(x, y); started = true;
+		}
+		ctx.stroke();
+	}
+	// playhead
+	ctx.strokeStyle = '#ffc83c'; ctx.lineWidth = 1; ctx.beginPath();
+	ctx.moveTo(px, padT - 4); ctx.lineTo(px, H - padB); ctx.stroke();
+	// legend (top, left-to-right)
+	let lx = padL + 4; ctx.font = '11px system-ui'; ctx.textBaseline = 'middle';
+	for (const s of chartSeries) {
+		ctx.fillStyle = `rgb(${s.color[0]},${s.color[1]},${s.color[2]})`;
+		ctx.fillRect(lx, 8, 9, 9); lx += 13;
+		ctx.fillText(s.type, lx, 13); lx += ctx.measureText(s.type).width + 14;
+	}
+}
+
 async function main(): Promise<void> {
 	statusEl.textContent = 'initialising MEOS (WebAssembly)…';
 	await initMeos();
@@ -87,6 +152,22 @@ async function main(): Promise<void> {
 	}
 	let ids = [...byId.keys()];
 	if (MAX_SHIPS > 0 && ids.length > MAX_SHIPS) ids = ids.slice(0, MAX_SHIPS);
+
+	// fetch the aggregate time series (avg SOG per ship type) for the evolving chart
+	fetch(`/collections/${CID}/timeseries?step=600`).then(async tr => {
+		if (!tr.ok) return;
+		const ts = (await tr.json()) as { buckets: number[]; series: Record<string, (number | null)[]> };
+		const out: ChartSeries[] = [];
+		for (const [type, vals] of Object.entries(ts.series)) {
+			const pts = ts.buckets.map((b, i) => ({ ms: b * 1000, v: vals[i] })).filter(p => p.v != null) as { ms: number; v: number }[];
+			if (pts.length < 2) continue;
+			out.push({ type, color: SHIPTYPE_COLOR[type] ?? SHIPTYPE_COLOR.Other, pts });
+		}
+		// keep the most-populated types so the chart stays legible
+		out.sort((a, b) => b.pts.length - a.pts.length);
+		chartSeries = out.slice(0, 7);
+		chartMaxV = Math.max(1, Math.ceil(Math.max(...chartSeries.flatMap(s => s.pts.map(p => p.v))) / 5) * 5);
+	}).catch(() => { /* chart is optional */ });
 
 	// --- map + basemap + controls FIRST so the view shows immediately ---
 	const mapOpts: maplibregl.MapOptions = {
@@ -200,6 +281,7 @@ async function main(): Promise<void> {
 		});
 		scrub.value = String(Math.round(((clockMs - tminMs) / spanMs) * 1000));
 		tnowEl.textContent = fmtClock(clockMs);
+		drawChart(clockMs, tminMs, tmaxMs);
 		requestAnimationFrame(frame);
 	}
 	requestAnimationFrame(frame);

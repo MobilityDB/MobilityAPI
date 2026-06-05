@@ -26,6 +26,7 @@
 -- ============================================================================
 
 SET DATESTYLE = 'ISO, DMY';                 -- AIS timestamps are DD/MM/YYYY
+SET TIME ZONE 'UTC';                         -- AIS times are UTC; store them as UTC
 \set gap '30 minutes'
 CREATE EXTENSION IF NOT EXISTS MobilityDB CASCADE;
 
@@ -69,15 +70,17 @@ WHERE Latitude  BETWEEN 40.18 AND 84.73
 -- --- 3. One report per (vessel, instant) -----------------------------------
 DROP TABLE IF EXISTS AISClean;
 CREATE TABLE AISClean AS
-SELECT DISTINCT ON (MMSI, T) MMSI, T, Name, Geom
+SELECT DISTINCT ON (MMSI, T) MMSI, T, Name, Geom, SOG
 FROM AISInput
 WHERE Geom IS NOT NULL
 ORDER BY MMSI, T;
 
 -- --- 4. Assemble one gap-split trajectory per vessel ----------------------
+-- Ids run from the most-travelled vessel down, so the lowest ids (the default
+-- selection of both tutorials) are vessels that actually move.
 DROP TABLE IF EXISTS ships;
 CREATE TABLE ships AS
-SELECT row_number() OVER (ORDER BY mmsi)::int AS id, mmsi, name, trip
+SELECT row_number() OVER (ORDER BY length(trip) DESC, mmsi)::int AS id, mmsi, name, trip
 FROM (
   SELECT MMSI AS mmsi,
          MIN(Name) FILTER (WHERE Name IS NOT NULL) AS name,
@@ -86,13 +89,33 @@ FROM (
   FROM AISClean
   GROUP BY MMSI
   HAVING count(*) > 1) tracks
-WHERE numInstants(trip) > 1;                 -- a trajectory needs ≥ 2 instants
-
--- --- 5. Drop implausible trajectories (zero-length or > 1500 km) ------------
-DELETE FROM ships WHERE length(trip) = 0 OR length(trip) >= 1500000;
+WHERE numInstants(trip) > 1                   -- a trajectory needs ≥ 2 instants
+  AND length(trip) > 0                        -- drop stationary noise
+  AND length(trip) < 1500000;                 -- drop implausible (> 1500 km) tracks
 
 ALTER TABLE ships ADD PRIMARY KEY (id);
 CREATE INDEX ships_trip_gist ON ships USING gist (trip);   -- bbox/datetime filters
+
+-- --- 5. Speed-over-ground (AIS SOG) as a temporal property per vessel --------
+-- The tier serves this at /…/tproperties/speed; the streaming tutorial charts
+-- its windowed average. Built while the AIS staging tables are still present.
+CREATE TABLE IF NOT EXISTS mf_tproperty (
+  cid text NOT NULL, fid bigint NOT NULL, name text NOT NULL,
+  ptype text NOT NULL, uom text, description text,
+  vfloat tfloat, vint tint, vtext ttext, vbool tbool,
+  PRIMARY KEY (cid, fid, name)
+);
+-- Cleared first so reloading rebuilds against the current ids (the ships table
+-- is reassigned ids on every load).
+DELETE FROM mf_tproperty WHERE cid = 'ships' AND name = 'speed';
+INSERT INTO mf_tproperty (cid, fid, name, ptype, uom, description, vfloat)
+SELECT 'ships', s.id, 'speed', 'TReal', 'kn', 'Speed over ground (AIS SOG)',
+       tfloatSeqSetGaps(array_agg(tfloat(c.SOG, c.T) ORDER BY c.T),
+                        maxt := (:'gap')::interval)
+FROM AISClean c JOIN ships s ON s.mmsi = c.MMSI
+WHERE c.SOG IS NOT NULL AND c.SOG < 102.3   -- 102.3 = SOG "not available"
+GROUP BY s.id
+HAVING count(*) > 1;
 
 DROP TABLE AISInput, AISClean;
 ANALYZE ships;
@@ -101,13 +124,7 @@ ANALYZE ships;
 -- User-supplied, time-varying attributes the tier serves at /…/tproperties,
 -- stored as native MobilityDB temporal values in the same mf_tproperty table
 -- the Go tier writes. Each is a linear tfloat over the feature's own window, so
--- the values track whatever vessel sorts first in the loaded dataset.
-CREATE TABLE IF NOT EXISTS mf_tproperty (
-  cid text NOT NULL, fid bigint NOT NULL, name text NOT NULL,
-  ptype text NOT NULL, uom text, description text,
-  vfloat tfloat, vint tint, vtext ttext, vbool tbool,
-  PRIMARY KEY (cid, fid, name)
-);
+-- the values track the most-travelled vessel (feature 1).
 INSERT INTO mf_tproperty (cid, fid, name, ptype, uom, description, vfloat)
 SELECT 'ships', 1, p.name, 'TReal', p.uom, p.description,
        ('[' || p.v0 || '@' || startTimestamp(s.trip) || ', '

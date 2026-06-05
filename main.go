@@ -122,6 +122,13 @@ func main() {
 	mux.HandleFunc("GET /collections/{cid}/items/{fid}/tproperties/{pname}/queries/{qid}", getQuery)
 	mux.HandleFunc("GET /collections/{cid}/items/{fid}/tproperties/{pname}/queries/{qid}/stream", streamQuery)
 	mux.HandleFunc("DELETE /collections/{cid}/items/{fid}/tproperties/{pname}/queries/{qid}", deleteQuery)
+	// MF Part 4: a continuous query that streams the moving feature's position
+	// (the temporal geometry), the feed for an animated map.
+	mux.HandleFunc("POST /collections/{cid}/items/{fid}/tgsequence/queries", postGeometryQuery)
+	mux.HandleFunc("GET /collections/{cid}/items/{fid}/tgsequence/queries", listGeometryQueries)
+	mux.HandleFunc("GET /collections/{cid}/items/{fid}/tgsequence/queries/{qid}", getQuery)
+	mux.HandleFunc("GET /collections/{cid}/items/{fid}/tgsequence/queries/{qid}/stream", streamQuery)
+	mux.HandleFunc("DELETE /collections/{cid}/items/{fid}/tgsequence/queries/{qid}", deleteQuery)
 
 	addr := ":" + strconv.Itoa(envInt("MFAPI_PORT", 8088))
 	srv := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second}

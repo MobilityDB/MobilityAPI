@@ -98,8 +98,8 @@ func TestRegistrySubmitBroadcastStop(t *testing.T) {
 	src <- Instant{T: "2026-01-01T00:00:00Z", V: 10}
 	select {
 	case got := <-sub:
-		if got.V != 11 {
-			t.Fatalf("transform: want 11 got %v", got.V)
+		if got["value"] != 11.0 {
+			t.Fatalf("transform: want 11 got %v", got["value"])
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("no event delivered")

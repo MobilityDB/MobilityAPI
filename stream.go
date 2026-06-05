@@ -39,6 +39,7 @@ type Instant struct {
 
 // QuerySpec is an engine-neutral continuous-query definition.
 type QuerySpec struct {
+	Kind     string // "transform" (a temporal property) or "geometry" (the moving point)
 	CID      string
 	FID      int
 	Pname    string
@@ -137,29 +138,36 @@ func supportedOps() string {
 	return strings.Join(keys, ", ")
 }
 
-// contQuery is one registered continuous query: its spec, the engine handle,
-// and the set of SSE subscribers a pump goroutine fans the results out to.
+// Event is the JSON payload of one streamed record — a transformed instant, a
+// moving-feature position, or (later) a window aggregate. The control plane fans
+// Events out to SSE subscribers without interpreting their shape.
+type Event = map[string]any
+
+// contQuery is one registered continuous query: its spec, the unified Event
+// stream it fans out, and the set of SSE subscribers a pump goroutine serves.
+// handle is the engine handle for transform/aggregate queries; it is nil for a
+// geometry query, which streams positions directly from its source.
 type contQuery struct {
 	id      string
 	spec    QuerySpec
 	handle  QueryHandle
+	events  <-chan Event
 	created time.Time
 	cancel  context.CancelFunc
 
 	mu      sync.Mutex
-	subs    map[chan Instant]struct{}
+	subs    map[chan Event]struct{}
 	stopped bool
 }
 
-// pump fans the engine's result instants out to every subscriber. A slow
-// subscriber is skipped (never blocks the others); when the engine ends, all
-// subscribers are closed.
+// pump fans each Event out to every subscriber. A slow subscriber is skipped
+// (never blocks the others); when the event stream ends, all subscribers close.
 func (cq *contQuery) pump() {
-	for in := range cq.handle.Results() {
+	for ev := range cq.events {
 		cq.mu.Lock()
 		for ch := range cq.subs {
 			select {
-			case ch <- in:
+			case ch <- ev:
 			default:
 			}
 		}
@@ -174,8 +182,8 @@ func (cq *contQuery) pump() {
 	cq.mu.Unlock()
 }
 
-func (cq *contQuery) subscribe() chan Instant {
-	ch := make(chan Instant, 32)
+func (cq *contQuery) subscribe() chan Event {
+	ch := make(chan Event, 32)
 	cq.mu.Lock()
 	if cq.stopped {
 		close(ch)
@@ -186,7 +194,7 @@ func (cq *contQuery) subscribe() chan Instant {
 	return ch
 }
 
-func (cq *contQuery) unsubscribe(ch chan Instant) {
+func (cq *contQuery) unsubscribe(ch chan Event) {
 	cq.mu.Lock()
 	if _, ok := cq.subs[ch]; ok {
 		delete(cq.subs, ch)
@@ -197,7 +205,9 @@ func (cq *contQuery) unsubscribe(ch chan Instant) {
 
 func (cq *contQuery) stop() {
 	cq.cancel()
-	cq.handle.Stop()
+	if cq.handle != nil {
+		cq.handle.Stop()
+	}
 }
 
 func (cq *contQuery) status() string {
@@ -207,10 +217,16 @@ func (cq *contQuery) status() string {
 	if st {
 		return "stopped"
 	}
-	return cq.handle.Status()
+	if cq.handle != nil {
+		return cq.handle.Status()
+	}
+	return "running"
 }
 
 func (cq *contQuery) basePath() string {
+	if cq.spec.Kind == "geometry" {
+		return fmt.Sprintf("/collections/%s/items/%d/tgsequence/queries", cq.spec.CID, cq.spec.FID)
+	}
 	return fmt.Sprintf("/collections/%s/items/%d/tproperties/%s/queries", cq.spec.CID, cq.spec.FID, cq.spec.Pname)
 }
 
@@ -223,23 +239,41 @@ type streamRegistry struct {
 
 var streamReg = &streamRegistry{queries: map[string]*contQuery{}}
 
-// submit registers a query, starts it on the engine, and begins fanning out its
-// results. The caller owns the cancellable context (the query outlives the HTTP
-// request that created it); cancel is stored so stop() can end it.
+// register stores a query built around its Event stream and starts fanning out.
+// The caller owns the cancellable context (the query outlives the HTTP request
+// that created it); cancel is stored so stop() can end it.
+func (r *streamRegistry) register(spec QuerySpec, handle QueryHandle, events <-chan Event, cancel context.CancelFunc) *contQuery {
+	r.mu.Lock()
+	r.nextID++
+	id := "q" + strconv.Itoa(r.nextID)
+	cq := &contQuery{id: id, spec: spec, handle: handle, events: events, created: time.Now().UTC(), cancel: cancel, subs: map[chan Event]struct{}{}}
+	r.queries[id] = cq
+	r.mu.Unlock()
+	go cq.pump()
+	return cq
+}
+
+// submit runs a transform query on the engine and adapts its instant results
+// into the Event stream the control plane fans out.
 func (r *streamRegistry) submit(ctx context.Context, cancel context.CancelFunc, eng StreamEngine, spec QuerySpec, source <-chan Instant) (*contQuery, error) {
 	h, err := eng.Submit(ctx, spec, source)
 	if err != nil {
 		cancel()
 		return nil, err
 	}
-	r.mu.Lock()
-	r.nextID++
-	id := "q" + strconv.Itoa(r.nextID)
-	cq := &contQuery{id: id, spec: spec, handle: h, created: time.Now().UTC(), cancel: cancel, subs: map[chan Instant]struct{}{}}
-	r.queries[id] = cq
-	r.mu.Unlock()
-	go cq.pump()
-	return cq, nil
+	events := make(chan Event, 64)
+	go func() {
+		defer close(events)
+		for in := range h.Results() {
+			ev := Event{"datetime": in.T, "value": in.V, "property": spec.Pname, "operation": spec.Op}
+			select {
+			case events <- ev:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	return r.register(spec, h, events, cancel), nil
 }
 
 func (r *streamRegistry) get(id string) *contQuery {
@@ -514,15 +548,12 @@ func streamQuery(w http.ResponseWriter, r *http.Request) {
 		case <-ping.C:
 			fmt.Fprint(w, ": keep-alive\n\n")
 			fl.Flush()
-		case in, ok := <-ch:
+		case ev, ok := <-ch:
 			if !ok {
 				return
 			}
-			b, _ := json.Marshal(map[string]any{
-				"datetime": in.T, "value": in.V,
-				"property": cq.spec.Pname, "operation": cq.spec.Op,
-			})
-			fmt.Fprintf(w, "event: instant\ndata: %s\n\n", b)
+			b, _ := json.Marshal(ev)
+			fmt.Fprintf(w, "event: instant\ndata: %s\n\n", rfc3339Tz(string(b)))
 			fl.Flush()
 		}
 	}

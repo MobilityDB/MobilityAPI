@@ -54,8 +54,14 @@ continuous transform. No external dataset is required.
 | `GET` | `…/tproperties/{name}/queries/{queryId}` | query status (`cquery` link object) |
 | `GET` | `…/tproperties/{name}/queries/{queryId}/stream` | result stream (Server-Sent Events) |
 | `DELETE` | `…/tproperties/{name}/queries/{queryId}` | stop the query |
+| `POST` | `…/tproperties/{name}/ingest` | push a live record (`{datetime, value}`) to the live queries on the property |
 | `POST` | `…/tgsequence/queries` | register a position (geometry) query |
 | `GET` | `…/tgsequence/queries/{queryId}/stream` | the moving feature's positions (SSE) |
+
+A query registered with `"live": true` runs over the pushed stream instead of a
+replay of stored values: a producer `POST`s records to `…/ingest` and every live
+query on the property processes them in real time — the broker-agnostic form of
+the EDR Pub/Sub source (a Kafka/MQTT binding feeds the same hub).
 
 The geometry query streams the moving feature's position as `{datetime,
 coordinates}` events — the feed an animated map consumes: a browser subscribes to

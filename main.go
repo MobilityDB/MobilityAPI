@@ -122,6 +122,8 @@ func main() {
 	mux.HandleFunc("GET /collections/{cid}/items/{fid}/tproperties/{pname}/queries/{qid}", getQuery)
 	mux.HandleFunc("GET /collections/{cid}/items/{fid}/tproperties/{pname}/queries/{qid}/stream", streamQuery)
 	mux.HandleFunc("DELETE /collections/{cid}/items/{fid}/tproperties/{pname}/queries/{qid}", deleteQuery)
+	// live ingestion: a producer pushes records that live queries process in real time
+	mux.HandleFunc("POST /collections/{cid}/items/{fid}/tproperties/{pname}/ingest", ingestProperty)
 	// MF Part 4: a continuous query that streams the moving feature's position
 	// (the temporal geometry), the feed for an animated map.
 	mux.HandleFunc("POST /collections/{cid}/items/{fid}/tgsequence/queries", postGeometryQuery)

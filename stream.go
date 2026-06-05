@@ -457,7 +457,8 @@ func postQuery(w http.ResponseWriter, r *http.Request) {
 			Size int    `json:"size"`
 			Unit string `json:"unit"`
 		} `json:"window"`
-		IntervalMs int `json:"intervalMs"`
+		Live       bool `json:"live"`
+		IntervalMs int  `json:"intervalMs"`
 	}
 	if r.Body != nil {
 		json.NewDecoder(r.Body).Decode(&body)
@@ -510,11 +511,17 @@ func postQuery(w http.ResponseWriter, r *http.Request) {
 	}
 
 	qctx, qcancel := context.WithCancel(context.Background())
-	src, err := replaySource(qctx, cid, fid, name, interval)
-	if err != nil {
-		qcancel()
-		httpErr(w, 400, err.Error())
-		return
+	var src <-chan Instant
+	if body.Live {
+		// the producer pushes records to …/ingest; this query processes them live
+		src = live.subscribe(qctx, liveKey(cid, fid, name))
+	} else {
+		src, err = replaySource(qctx, cid, fid, name, interval)
+		if err != nil {
+			qcancel()
+			httpErr(w, 400, err.Error())
+			return
+		}
 	}
 	cq, err := streamReg.submit(qctx, qcancel, eng, spec, src)
 	if err != nil {

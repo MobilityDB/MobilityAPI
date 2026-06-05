@@ -5,6 +5,19 @@ Go MobilityAPI tier over MobilityDB, using a day of Danish AIS data. It is plain
 (`requests`) against the server — the tier holds no MEOS, so nothing else runs in the
 notebook.
 
+## Selecting the backend
+
+The notebook is engine-agnostic: it is plain HTTP, so the **same notebook** runs against
+any MEOS-backed engine. The backend is chosen by the `MFAPI_DSN` scheme where the tier
+starts, not in the notebook:
+
+- `postgres://…` — PostgreSQL / MobilityDB (default build).
+- `duckdb:…` — MobilityDuck over DuckDB (`-tags duckdb`).
+- `spark:…` — MobilitySpark over Spark Connect (`-tags spark`).
+
+This mirrors the streaming tutorial, where `MFAPI_STREAM_ENGINE` switches the continuous
+queries between the in-process and Flink engines with no change to the client.
+
 ## Prerequisites
 
 - The Go tier reachable on `http://localhost:8088` with the `ships` collection loaded

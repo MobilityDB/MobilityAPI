@@ -54,3 +54,13 @@ continuous transform. No external dataset is required.
 | `GET` | `…/tproperties/{name}/queries/{queryId}` | query status (`cquery` link object) |
 | `GET` | `…/tproperties/{name}/queries/{queryId}/stream` | result stream (Server-Sent Events) |
 | `DELETE` | `…/tproperties/{name}/queries/{queryId}` | stop the query |
+| `POST` | `…/tgsequence/queries` | register a position (geometry) query |
+| `GET` | `…/tgsequence/queries/{queryId}/stream` | the moving feature's positions (SSE) |
+
+The geometry query streams the moving feature's position as `{datetime,
+coordinates}` events — the feed an animated map consumes: a browser subscribes to
+the SSE stream and renders the moving point (e.g. a DeckGL `TripsLayer` over a
+MapLibre basemap, with [MEOS.js](https://github.com/MobilityDB/MEOS.js) handling
+the temporal values client-side), interpolating between the streamed vertices to
+animate smooth motion. A property query (speed → knots, or a windowed aggregate)
+overlays the live value.

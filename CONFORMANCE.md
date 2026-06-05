@@ -14,7 +14,7 @@ http://www.opengis.net/spec/ogcapi-movingfeatures-4/1.0/conf/cquery
 | **Req 1** `cquery_link` — the `cquery` link object carries `rel`, `queryId`, `href`, `channel`, `status`, `type` | **met** | `cqueryLink` (`stream.go`); asserted by `TestCqueryLinkShape` |
 | **Req 2** `window` — a query carries a `window`; the result carries `[windowStart, windowEnd]` | **met** | `postQuery` window parsing; the meos engine emits the bounds; `TestWindowResultShape` |
 | **Req 3** `window_tumbling` — fixed-duration, non-overlapping windows | **met** | `runAggregate` TUMBLING (`stream_engine_meos.go`) |
-| **Req 4** `window_hopping` — fixed-duration, overlapping windows | **not yet** | TUMBLING and COUNT are implemented; HOPPING is planned |
+| **Req 4** `window_hopping` — fixed-duration, overlapping windows | **met** | `runHopping` (`stream_engine_meos.go`); `TestMeosHoppingWindow` |
 | **Req 5** `window_count` — windows over a record count | **met** | `runAggregate` COUNT; `TestMeosWindowAggregate` |
 
 ## Aggregations

@@ -107,6 +107,10 @@ func (h *meosHandle) runTransform(ctx context.Context, spec QuerySpec, source <-
 // COUNT windows close every spec.Window.Size records; TUMBLING windows close
 // when a record's timestamp crosses the next span boundary.
 func (h *meosHandle) runAggregate(ctx context.Context, spec QuerySpec, source <-chan Instant) {
+	if spec.Window.Type == "HOPPING" {
+		h.runHopping(ctx, spec, source)
+		return
+	}
 	var win []Instant
 	tumblingSpan := tumblingSpanSeconds(spec.Window)
 	var winEndUnix int64 // exclusive upper bound for the open TUMBLING window
@@ -143,6 +147,76 @@ func (h *meosHandle) runAggregate(ctx context.Context, spec QuerySpec, source <-
 			}
 		}
 	}
+}
+
+// runHopping emits one aggregate every hop over the records of the last span —
+// overlapping windows. It keeps a buffer of recent records, advances the emit
+// boundary by the hop, and evicts records that can no longer fall in any window.
+func (h *meosHandle) runHopping(ctx context.Context, spec QuerySpec, source <-chan Instant) {
+	span := tumblingSpanSeconds(spec.Window)
+	hop := hopSeconds(spec.Window)
+	var buf []Instant
+	var bufT []int64
+	idx := 0
+	var nextEmit int64
+	started := false
+	for {
+		select {
+		case <-ctx.Done():
+			h.setStatus("stopped")
+			return
+		case in, ok := <-source:
+			if !ok {
+				h.setStatus("stopped")
+				return
+			}
+			t := instantUnix(in, idx)
+			idx++
+			if !started {
+				nextEmit = t - (t % hop) + hop
+				started = true
+			}
+			buf = append(buf, in)
+			bufT = append(bufT, t)
+			for t >= nextEmit {
+				lo := nextEmit - span
+				var win []Instant
+				for i, bt := range bufT {
+					if bt >= lo && bt < nextEmit {
+						win = append(win, buf[i])
+					}
+				}
+				if len(win) > 0 {
+					if !h.emitWindow(ctx, spec, win) {
+						return
+					}
+				}
+				nextEmit += hop
+				keepFrom := nextEmit - span
+				k := 0
+				for k < len(bufT) && bufT[k] < keepFrom {
+					k++
+				}
+				buf = buf[k:]
+				bufT = bufT[k:]
+			}
+		}
+	}
+}
+
+// hopSeconds converts a HOPPING window hop+unit into seconds.
+func hopSeconds(w Window) int64 {
+	hop := int64(w.Hop)
+	switch w.HopUnit {
+	case "MINUTES":
+		hop *= 60
+	case "HOURS":
+		hop *= 3600
+	}
+	if hop <= 0 {
+		hop = 1
+	}
+	return hop
 }
 
 // emitWindow computes the aggregate over a closed window and emits it.

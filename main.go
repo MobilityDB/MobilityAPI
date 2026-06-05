@@ -1039,8 +1039,27 @@ func apiDoc(w http.ResponseWriter, r *http.Request) {
 				"post":   op("Append values to a temporal property (temporally disjoint; overlap → 409)"),
 				"delete": op("Delete a temporal property"),
 			},
-			"/collections/{cid}/export": get("Bulk lakehouse export: NDJSON, or ?format=parquet (WKB + bbox/time sidecar)"),
-			"/collections/{cid}/bulk":   map[string]any{"post": op("Bulk ingest (extension): a batch of (vehicleId, position, time) observations as GeoJSON Points or GeoParquet, optionally gzip/deflate/br/zstd-compressed; each is appended as one instant")},
+			"/collections/{cid}/items/{fid}/tproperties/{pname}/queries": map[string]any{
+				"get":  op("List the continuous queries on a temporal property"),
+				"post": op("Register a continuous query (MF Part 4): a lifted transform (operation), or a windowed aggregation (aggregation + window: COUNT | TUMBLING | HOPPING). Set live:true to source from pushed records"),
+			},
+			"/collections/{cid}/items/{fid}/tproperties/{pname}/queries/{qid}": map[string]any{
+				"get":    op("Continuous-query status (the cquery link object)"),
+				"delete": op("Stop a continuous query"),
+			},
+			"/collections/{cid}/items/{fid}/tproperties/{pname}/queries/{qid}/stream": get("Continuous-query results as Server-Sent Events (see api/streaming-asyncapi.yaml)"),
+			"/collections/{cid}/items/{fid}/tproperties/{pname}/ingest":               map[string]any{"post": op("Push a live record ({datetime, value}) to the live queries on the property")},
+			"/collections/{cid}/items/{fid}/tgsequence/queries": map[string]any{
+				"get":  op("List the geometry (position) continuous queries of a feature"),
+				"post": op("Register a geometry continuous query streaming the moving feature's position"),
+			},
+			"/collections/{cid}/items/{fid}/tgsequence/queries/{qid}": map[string]any{
+				"get":    op("Geometry continuous-query status (the cquery link object)"),
+				"delete": op("Stop a geometry continuous query"),
+			},
+			"/collections/{cid}/items/{fid}/tgsequence/queries/{qid}/stream": get("Moving-feature positions as Server-Sent Events (see api/streaming-asyncapi.yaml)"),
+			"/collections/{cid}/export":                                      get("Bulk lakehouse export: NDJSON, or ?format=parquet (WKB + bbox/time sidecar)"),
+			"/collections/{cid}/bulk":                                        map[string]any{"post": op("Bulk ingest (extension): a batch of (vehicleId, position, time) observations as GeoJSON Points or GeoParquet, optionally gzip/deflate/br/zstd-compressed; each is appended as one instant")},
 		},
 	}
 	w.Header().Set("Content-Type", "application/vnd.oai.openapi+json;version=3.0")

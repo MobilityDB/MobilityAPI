@@ -1,4 +1,7 @@
 import { defineConfig } from 'vite';
+import { fileURLToPath } from 'node:url';
+
+const page = (name: string) => fileURLToPath(new URL(name, import.meta.url));
 
 // The page calls the MobilityAPI tier same-origin; the dev server proxies those
 // paths to the tier (default http://localhost:8088, override with MFAPI_ORIGIN),
@@ -6,7 +9,20 @@ import { defineConfig } from 'vite';
 const origin = process.env.MFAPI_ORIGIN ?? 'http://localhost:8088';
 
 export default defineConfig({
+	build: {
+		rollupOptions: {
+			input: { main: page('index.html'), fleet: page('fleet.html') },
+		},
+	},
 	server: {
+		proxy: {
+			'/collections': { target: origin, changeOrigin: true },
+			'/health': { target: origin, changeOrigin: true },
+		},
+	},
+	// `vite preview` serves the production build (whose MEOS.js wasm is emitted as
+	// a hashed asset, so it loads reliably); it proxies to the tier the same way.
+	preview: {
 		proxy: {
 			'/collections': { target: origin, changeOrigin: true },
 			'/health': { target: origin, changeOrigin: true },

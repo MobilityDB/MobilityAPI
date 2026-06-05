@@ -1,13 +1,30 @@
 # MF Stream — animated map
 
-A browser front-end for the streaming tutorial: it registers a **geometry
-continuous query** on the MobilityAPI tier, subscribes to its Server-Sent Events
-position stream, and animates the moving feature over a [MapLibre](https://maplibre.org/)
-basemap with [DeckGL](https://deck.gl/). All temporal logic runs in the browser
-via [MEOS.js](https://github.com/MobilityDB/MEOS.js) (WebAssembly): the streamed
-vertices are assembled into a `TGeomPoint`, and `valueAtTimestamp` interpolates
-the position at the animation clock, so the dot moves smoothly between the
-vertices the stream delivers.
+Browser front-ends for the streaming tutorial. Two pages, both registering a
+**geometry continuous query** on the MobilityAPI tier, subscribing to its
+Server-Sent Events position stream, and animating moving features over a
+[MapLibre](https://maplibre.org/) basemap with [DeckGL](https://deck.gl/). All
+temporal logic runs in the browser via [MEOS.js](https://github.com/MobilityDB/MEOS.js)
+(WebAssembly): the streamed vertices are assembled into a `TGeomPoint`, and
+`valueAtTimestamp` interpolates the position at the animation clock, so a dot
+moves smoothly between the vertices the stream delivers.
+
+- **`fleet.html`** — the **animated counterpart of the DB tutorial**, over the
+  same `ships` collection (the one day of Danish AIS loaded by
+  `tutorial/setup/load_ships.sql`). A fleet of vessels animates over the map,
+  each coloured by its speed, with a live speed chart that grows as the stream
+  delivers values. Speed is the vessel's reported speed over ground (AIS SOG),
+  stored as a temporal property and delivered by a windowed-average continuous
+  query, so the chart accumulates the running average of the last observations.
+- **`index.html`** — a minimal single-feature map.
+
+## Common base with the static tutorial
+
+The animated tutorial uses the **same data and setup script** as the static
+notebook tutorial: load the `ships` collection once with
+`tutorial/setup/load_ships.sql`, then either notebook (request–response) or
+`fleet.html` (animated) runs over it. Point the fleet at another collection with
+`?cid=<collection>&vessels=<n>`.
 
 ## Requirements
 
@@ -22,8 +39,12 @@ vertices the stream delivers.
 
 ```bash
 npm install
-npm run dev   # proxies /collections to http://localhost:8088 (override with MFAPI_ORIGIN)
+npm run build && npm run preview   # serves the production build on http://localhost:4173
 ```
+
+`preview` serves the bundled MEOS.js wasm as a hashed asset, so it loads
+reliably; both `dev` and `preview` proxy `/collections` to the tier at
+`http://localhost:8088` (override with `MFAPI_ORIGIN`).
 
 Open the printed URL. The page registers the query, opens the stream, and
 animates the feature. Point it at another feature with query parameters:
@@ -46,14 +67,11 @@ browser:  positions → TGeomPoint (MEOS.js/WASM) → valueAtTimestamp(clock)
 The tier holds no MEOS and streams only the stored positions; the browser does
 the temporal interpolation.
 
-## Windowed-aggregate overlay
+## Windowed-aggregate speed
 
-The page also registers a windowed-aggregate query on a property (`speed` by
-default, `AVG` over a `COUNT` window) and shows the live value in the HUD,
-colouring the dot by it. The overlay degrades silently if the property is absent
-or the tier was built without the in-process aggregate engine (`-tags meos`) —
-the position animation still runs. Configure it with query parameters:
-
-```
-?aggProp=<property>&agg=AVG|SUM|MIN|MAX|COUNT&window=<count>
-```
+Alongside the position stream, `fleet.html` registers a windowed-aggregate query
+on each vessel's `speed` property (`AVG` over a `COUNT` window of the last
+observations). Each delivered value feeds the live chart, scales the colour ramp,
+and colours the vessel's dot. The speed feed degrades silently if the property is
+absent or the tier was built without the in-process aggregate engine
+(`-tags meos`) — the position animation still runs.

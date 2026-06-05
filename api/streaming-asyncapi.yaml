@@ -1,0 +1,91 @@
+asyncapi: 3.0.0
+info:
+  title: MobilityAPI — MF Stream (Continuous Query)
+  version: '1.0'
+  description: >-
+    Server-Sent Events channels for OGC API – Moving Features – Part 4
+    continuous queries. A query is registered over HTTP (see the OpenAPI
+    surface); its results are delivered on the SSE channel referenced by the
+    cquery link object's `channel`.
+
+servers:
+  tier:
+    host: localhost:8088
+    protocol: http
+    description: The MobilityAPI tier.
+
+channels:
+  propertyResults:
+    address: /collections/{cid}/items/{fid}/tproperties/{name}/queries/{queryId}/stream
+    description: Results of a property continuous query (a transform or a windowed aggregate).
+    parameters:
+      cid: { description: collection id }
+      fid: { description: feature id }
+      name: { description: temporal property name }
+      queryId: { description: registered query id }
+    messages:
+      transform:
+        $ref: '#/components/messages/transform'
+      windowAggregate:
+        $ref: '#/components/messages/windowAggregate'
+  geometryResults:
+    address: /collections/{cid}/items/{fid}/tgsequence/queries/{queryId}/stream
+    description: Positions of a moving feature (a geometry continuous query).
+    parameters:
+      cid: { description: collection id }
+      fid: { description: feature id }
+      queryId: { description: registered query id }
+    messages:
+      position:
+        $ref: '#/components/messages/position'
+
+operations:
+  receivePropertyResults:
+    action: receive
+    channel: { $ref: '#/channels/propertyResults' }
+  receiveGeometryResults:
+    action: receive
+    channel: { $ref: '#/channels/geometryResults' }
+
+components:
+  messages:
+    transform:
+      name: transform
+      title: Transformed instant
+      contentType: application/json
+      payload:
+        type: object
+        required: [datetime, value]
+        properties:
+          datetime: { type: string }
+          value: { type: number }
+          property: { type: string }
+          operation: { type: string }
+    windowAggregate:
+      name: windowAggregate
+      title: Window aggregate
+      contentType: application/json
+      payload:
+        type: object
+        required: [windowStart, windowEnd, aggregation, value, count]
+        properties:
+          windowStart: { type: string }
+          windowEnd: { type: string }
+          aggregation: { type: string, enum: [COUNT, SUM, AVG, MIN, MAX] }
+          value: { type: number }
+          count: { type: integer }
+          property: { type: string }
+    position:
+      name: position
+      title: Moving-feature position
+      contentType: application/json
+      payload:
+        type: object
+        required: [datetime, coordinates]
+        properties:
+          datetime: { type: string }
+          coordinates:
+            type: array
+            items: { type: number }
+            minItems: 2
+            maxItems: 3

@@ -49,7 +49,7 @@ continuous transform. No external dataset is required.
 
 | Method | Path | Meaning |
 |---|---|---|
-| `POST` | `…/tproperties/{name}/queries` | register a continuous transform |
+| `POST` | `…/tproperties/{name}/queries` | register a continuous transform (`operation`) or a windowed aggregate (`aggregation` + `window`) |
 | `GET` | `…/tproperties/{name}/queries` | list registered queries |
 | `GET` | `…/tproperties/{name}/queries/{queryId}` | query status (`cquery` link object) |
 | `GET` | `…/tproperties/{name}/queries/{queryId}/stream` | result stream (Server-Sent Events) |

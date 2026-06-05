@@ -45,6 +45,9 @@ type flinkEngine struct {
 func (e *flinkEngine) Name() string { return "flink" }
 
 func (e *flinkEngine) Submit(ctx context.Context, spec QuerySpec, source <-chan Instant) (QueryHandle, error) {
+	if spec.Agg != "" {
+		return nil, fmt.Errorf("the flink engine runs transforms; windowed aggregation is served by the in-process engine")
+	}
 	info, ok := liftedOps[spec.Op]
 	if !ok {
 		return nil, fmt.Errorf("unknown operation %q", spec.Op)
@@ -72,7 +75,7 @@ func (e *flinkEngine) Submit(ctx context.Context, spec QuerySpec, source <-chan 
 		return nil, fmt.Errorf("start flink bridge job: %w", err)
 	}
 
-	h := &flinkHandle{results: make(chan Instant, 64), status: "running"}
+	h := &flinkHandle{results: make(chan Event, 64), status: "running"}
 	ts := make(chan string, 1024) // source timestamps, paired with outputs by order
 
 	// feeder: source instant values → the job's stdin (one float per line).
@@ -119,8 +122,9 @@ func (e *flinkEngine) Submit(ctx context.Context, spec QuerySpec, source <-chan 
 				h.setStatus("stopped")
 				return
 			}
+			ev := Event{"datetime": t, "value": v, "property": spec.Pname, "operation": spec.Op}
 			select {
-			case h.results <- Instant{T: t, V: v}:
+			case h.results <- ev:
 			case <-ctx.Done():
 				h.setStatus("stopped")
 				return
@@ -135,12 +139,12 @@ func (e *flinkEngine) Submit(ctx context.Context, spec QuerySpec, source <-chan 
 // flinkHandle exposes the result channel and the live status of a query running
 // on the Flink bridge job.
 type flinkHandle struct {
-	results chan Instant
+	results chan Event
 	mu      sync.Mutex
 	status  string
 }
 
-func (h *flinkHandle) Results() <-chan Instant { return h.results }
+func (h *flinkHandle) Results() <-chan Event { return h.results }
 
 func (h *flinkHandle) Status() string {
 	h.mu.Lock()

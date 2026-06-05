@@ -34,6 +34,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 	"unsafe"
 )
 
@@ -49,15 +50,19 @@ type meosEngine struct{}
 func (e *meosEngine) Name() string { return "meos-local" }
 
 func (e *meosEngine) Submit(ctx context.Context, spec QuerySpec, source <-chan Instant) (QueryHandle, error) {
-	if _, ok := liftedOps[spec.Op]; !ok {
+	if spec.Agg != "" {
+		if !aggregations[spec.Agg] {
+			return nil, fmt.Errorf("unknown aggregation %q", spec.Agg)
+		}
+	} else if _, ok := liftedOps[spec.Op]; !ok {
 		return nil, fmt.Errorf("unknown operation %q", spec.Op)
 	}
-	h := &meosHandle{results: make(chan Instant, 64), status: "running"}
+	h := &meosHandle{results: make(chan Event, 64), status: "running"}
 	go h.run(ctx, spec, source)
 	return h, nil
 }
 
-// run pins the query to one OS thread, initialises MEOS on it, transforms each
+// run pins the query to one OS thread, initialises MEOS on it, processes each
 // record, and finalises MEOS before releasing the thread.
 func (h *meosHandle) run(ctx context.Context, spec QuerySpec, source <-chan Instant) {
 	runtime.LockOSThread()
@@ -66,6 +71,15 @@ func (h *meosHandle) run(ctx context.Context, spec QuerySpec, source <-chan Inst
 	defer runtime.UnlockOSThread() // runs last: keep the thread locked through meos_finalize
 	defer C.meos_finalize()
 	defer close(h.results)
+	if spec.Agg != "" {
+		h.runAggregate(ctx, spec, source)
+		return
+	}
+	h.runTransform(ctx, spec, source)
+}
+
+// runTransform applies a lifted operation to each record and emits the result.
+func (h *meosHandle) runTransform(ctx context.Context, spec QuerySpec, source <-chan Instant) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -81,13 +95,81 @@ func (h *meosHandle) run(ctx context.Context, spec QuerySpec, source <-chan Inst
 				h.setStatus("failed")
 				return
 			}
-			select {
-			case h.results <- out:
-			case <-ctx.Done():
-				h.setStatus("stopped")
+			ev := Event{"datetime": out.T, "value": out.V, "property": spec.Pname, "operation": spec.Op}
+			if !h.emit(ctx, ev) {
 				return
 			}
 		}
+	}
+}
+
+// runAggregate groups records into windows and emits one aggregate per window.
+// COUNT windows close every spec.Window.Size records; TUMBLING windows close
+// when a record's timestamp crosses the next span boundary.
+func (h *meosHandle) runAggregate(ctx context.Context, spec QuerySpec, source <-chan Instant) {
+	var win []Instant
+	tumblingSpan := tumblingSpanSeconds(spec.Window)
+	var winEndUnix int64 // exclusive upper bound for the open TUMBLING window
+	for {
+		select {
+		case <-ctx.Done():
+			h.setStatus("stopped")
+			return
+		case in, ok := <-source:
+			if !ok {
+				h.setStatus("stopped")
+				return
+			}
+			if spec.Window.Type == "TUMBLING" {
+				ts := instantUnix(in, len(win)) // best-effort event time
+				if len(win) > 0 && ts >= winEndUnix {
+					if !h.emitWindow(ctx, spec, win) {
+						return
+					}
+					win = win[:0]
+				}
+				if len(win) == 0 {
+					winEndUnix = ts - (ts % tumblingSpan) + tumblingSpan
+				}
+				win = append(win, in)
+			} else { // COUNT
+				win = append(win, in)
+				if len(win) >= spec.Window.Size {
+					if !h.emitWindow(ctx, spec, win) {
+						return
+					}
+					win = win[:0]
+				}
+			}
+		}
+	}
+}
+
+// emitWindow computes the aggregate over a closed window and emits it.
+func (h *meosHandle) emitWindow(ctx context.Context, spec QuerySpec, win []Instant) bool {
+	val, count, err := windowAggregate(spec.Agg, win)
+	if err != nil {
+		h.setStatus("failed")
+		return false
+	}
+	ev := Event{
+		"windowStart": win[0].T,
+		"windowEnd":   win[len(win)-1].T,
+		"property":    spec.Pname,
+		"aggregation": spec.Agg,
+		"value":       val,
+		"count":       count,
+	}
+	return h.emit(ctx, ev)
+}
+
+func (h *meosHandle) emit(ctx context.Context, ev Event) bool {
+	select {
+	case h.results <- ev:
+		return true
+	case <-ctx.Done():
+		h.setStatus("stopped")
+		return false
 	}
 }
 
@@ -160,14 +242,92 @@ func parseInstantText(s, t string) (Instant, error) {
 	return Instant{T: t, V: v}, nil
 }
 
+// windowAggregate computes one aggregation over a window's values through MEOS.
+// The window's values are assembled into a discrete tfloat at synthetic, ordered
+// timestamps (the aggregate is value-based, so the times only order the records),
+// and the MEOS accessor for the aggregation is applied.
+func windowAggregate(agg string, win []Instant) (float64, int, error) {
+	base := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
+	var b strings.Builder
+	b.WriteByte('{')
+	for i, in := range win {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		ts := base.Add(time.Duration(i)*time.Second).Format("2006-01-02 15:04:05") + "+00"
+		b.WriteString(strconv.FormatFloat(in.V, 'g', -1, 64))
+		b.WriteByte('@')
+		b.WriteString(ts)
+	}
+	b.WriteByte('}')
+
+	cs := C.CString(b.String())
+	defer C.free(unsafe.Pointer(cs))
+	t := C.tfloat_in(cs)
+	if t == nil {
+		return 0, 0, fmt.Errorf("tfloat_in failed for the window")
+	}
+	defer C.free(unsafe.Pointer(t))
+	n := int(C.temporal_num_instants(t))
+
+	switch agg {
+	case "COUNT":
+		return float64(n), n, nil
+	case "MIN":
+		return float64(C.tfloat_min_value(t)), n, nil
+	case "MAX":
+		return float64(C.tfloat_max_value(t)), n, nil
+	case "AVG":
+		return float64(C.tnumber_avg_value(t)), n, nil
+	case "SUM":
+		var cnt C.int
+		arr := C.tfloat_values(t, &cnt)
+		defer C.free(unsafe.Pointer(arr))
+		vals := unsafe.Slice((*C.double)(arr), int(cnt))
+		sum := 0.0
+		for _, v := range vals {
+			sum += float64(v)
+		}
+		return sum, n, nil
+	}
+	return 0, n, fmt.Errorf("unknown aggregation %q", agg)
+}
+
+// tumblingSpanSeconds converts a TUMBLING window size+unit into seconds.
+func tumblingSpanSeconds(w Window) int64 {
+	span := int64(w.Size)
+	switch w.Unit {
+	case "MINUTES":
+		span *= 60
+	case "HOURS":
+		span *= 3600
+	}
+	if span <= 0 {
+		span = 1
+	}
+	return span
+}
+
+// instantUnix parses a record's timestamp to Unix seconds for TUMBLING-window
+// assignment, falling back to the record's index when the source serialises the
+// timestamp in a non-standard form.
+func instantUnix(in Instant, idx int) int64 {
+	for _, layout := range []string{time.RFC3339, "2006-01-02T15:04:05Z07:00", "2006-01-02 15:04:05Z07:00", "2006-01-02 15:04:05-07"} {
+		if ts, err := time.Parse(layout, in.T); err == nil {
+			return ts.Unix()
+		}
+	}
+	return int64(idx)
+}
+
 // meosHandle exposes the result channel and the live status of a running query.
 type meosHandle struct {
-	results chan Instant
+	results chan Event
 	mu      sync.Mutex
 	status  string
 }
 
-func (h *meosHandle) Results() <-chan Instant { return h.results }
+func (h *meosHandle) Results() <-chan Event { return h.results }
 
 func (h *meosHandle) Status() string {
 	h.mu.Lock()

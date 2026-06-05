@@ -48,14 +48,50 @@ func TestMeosTransform(t *testing.T) {
 		src <- Instant{T: ts, V: c.in}
 		select {
 		case got := <-h.Results():
-			if math.Abs(got.V-c.want) > 1e-9 {
-				t.Errorf("%s(%v, arg=%v) = %v, want %v", c.op, c.in, c.arg, got.V, c.want)
+			if math.Abs(got["value"].(float64)-c.want) > 1e-9 {
+				t.Errorf("%s(%v, arg=%v) = %v, want %v", c.op, c.in, c.arg, got["value"], c.want)
 			}
-			if got.T != ts {
-				t.Errorf("%s: timestamp changed %q -> %q", c.op, ts, got.T)
+			if got["datetime"] != ts {
+				t.Errorf("%s: timestamp changed %q -> %q", c.op, ts, got["datetime"])
 			}
 		case <-time.After(5 * time.Second):
 			t.Errorf("%s: no result", c.op)
+		}
+		cancel()
+	}
+}
+
+// A COUNT window aggregates its records' values through MEOS.
+func TestMeosWindowAggregate(t *testing.T) {
+	e, _ := defaultStreamEngine()
+	cases := []struct {
+		agg  string
+		want float64
+	}{
+		{"COUNT", 3}, {"SUM", 12}, {"AVG", 4}, {"MIN", 2}, {"MAX", 6},
+	}
+	for _, c := range cases {
+		ctx, cancel := context.WithCancel(context.Background())
+		src := make(chan Instant, 3)
+		h, err := e.Submit(ctx, QuerySpec{Agg: c.agg, Window: Window{Type: "COUNT", Size: 3}}, src)
+		if err != nil {
+			t.Errorf("%s: submit: %v", c.agg, err)
+			cancel()
+			continue
+		}
+		for _, v := range []float64{2, 4, 6} {
+			src <- Instant{T: "2026-01-01T00:00:00+00", V: v}
+		}
+		select {
+		case got := <-h.Results():
+			if math.Abs(got["value"].(float64)-c.want) > 1e-9 {
+				t.Errorf("%s over [2,4,6] = %v, want %v", c.agg, got["value"], c.want)
+			}
+			if got["count"].(int) != 3 {
+				t.Errorf("%s: count = %v, want 3", c.agg, got["count"])
+			}
+		case <-time.After(5 * time.Second):
+			t.Errorf("%s: no window result", c.agg)
 		}
 		cancel()
 	}
@@ -79,7 +115,7 @@ func TestMeosConcurrentQueries(t *testing.T) {
 			src <- Instant{T: "2026-01-01T00:00:00+00", V: 10}
 			select {
 			case got := <-h.Results():
-				done <- got.V
+				done <- got["value"].(float64)
 			case <-time.After(5 * time.Second):
 				done <- math.NaN()
 			}

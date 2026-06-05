@@ -1,0 +1,22 @@
+{
+  "name": "mf-stream-map",
+  "private": true,
+  "type": "module",
+  "description": "Animated map for the MF Stream tutorial: a moving feature streamed over SSE, rendered with DeckGL over MapLibre, temporal values handled by MEOS.js in the browser.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@deck.gl/core": "^9.3.3",
+    "@deck.gl/layers": "^9.3.3",
+    "@deck.gl/mapbox": "^9.3.3",
+    "maplibre-gl": "^5.0.0",
+    "meos.js": "^1.0.1"
+  },
+  "devDependencies": {
+    "typescript": "^6.0.2",
+    "vite": "^7.0.0"
+  }
+}

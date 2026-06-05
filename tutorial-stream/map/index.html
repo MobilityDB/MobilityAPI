@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<title>MF Stream — animated map</title>
+		<style>
+			html, body { margin: 0; height: 100%; font-family: system-ui, sans-serif; }
+			#map { position: absolute; inset: 0; }
+			#hud {
+				position: absolute; top: 12px; left: 12px; z-index: 1;
+				background: rgba(255, 255, 255, 0.9); padding: 10px 12px;
+				border-radius: 8px; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
+				font-size: 13px; line-height: 1.5; max-width: 320px;
+			}
+			#hud h1 { font-size: 14px; margin: 0 0 4px; }
+			#status { color: #555; }
+			.kv { font-variant-numeric: tabular-nums; }
+		</style>
+	</head>
+	<body>
+		<div id="map"></div>
+		<div id="hud">
+			<h1>MF Stream — animated map</h1>
+			<div id="status">starting…</div>
+			<div class="kv">position: <span id="pos">—</span></div>
+			<div class="kv">vertices: <span id="count">0</span></div>
+		</div>
+		<script type="module" src="/src/main.ts"></script>
+	</body>
+</html>

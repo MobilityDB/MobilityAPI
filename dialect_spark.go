@@ -43,6 +43,11 @@ var sparkFnCall = func() *regexp.Regexp {
 // sparkLiteral), so every double-quoted token is an identifier.
 var sparkIdent = regexp.MustCompile(`"([^"]+)"`)
 
+// sparkTextCast maps the SQL `text`/`jsonb` cast targets to Spark's `string`
+// (Spark has neither type); the tier casts box accessors with `CAST(... AS text)`
+// and the generic properties with `CAST(... AS jsonb)`.
+var sparkTextCast = regexp.MustCompile(`(?i)\bAS\s+(text|jsonb)\b`)
+
 // rewriteSparkSQL remaps the canonical function names that differ in the Spark
 // idiom (function-call positions only, name followed by "(") and rewrites
 // double-quoted identifiers to Spark's backtick quoting.
@@ -51,7 +56,8 @@ func rewriteSparkSQL(sql string) string {
 		name := strings.TrimRight(m[:len(m)-1], " \t")
 		return sparkNameMap[name] + "("
 	})
-	return sparkIdent.ReplaceAllString(sql, "`$1`")
+	sql = sparkIdent.ReplaceAllString(sql, "`$1`")
+	return sparkTextCast.ReplaceAllString(sql, "AS string")
 }
 
 // inlineParams substitutes $N placeholders with literals (Spark Connect Sql has

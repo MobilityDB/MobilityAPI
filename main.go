@@ -185,10 +185,15 @@ func collectionMeta(ctx context.Context, cid string) (table string, srid int, ok
 // generic `properties jsonb` column (collections created through POST
 // /collections) rather than the typed ships columns (mmsi, name).
 func collectionGeneric(ctx context.Context, table string) bool {
-	var g bool
-	db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM information_schema.columns
-	  WHERE table_schema='public' AND table_name=$1 AND column_name='properties')`, table).Scan(&g)
-	return g
+	// Portable column probe: selecting the generic `properties` column succeeds
+	// only when it exists, on PostgreSQL, DuckDB and Spark alike (Spark Connect
+	// has no information_schema).
+	rows, err := db.Query(ctx, "SELECT properties FROM "+ident(table)+" LIMIT 0")
+	if err != nil {
+		return false
+	}
+	rows.Close()
+	return true
 }
 
 // featCols lists the non-geometry feature columns carried through the inner

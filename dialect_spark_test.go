@@ -5,7 +5,7 @@ import "testing"
 func TestRewriteSparkSQL(t *testing.T) {
 	in := "SELECT id, CAST(Tmin(b) AS text), Xmin(b), asMFJSON(g) FROM s"
 	got := rewriteSparkSQL(in)
-	want := "SELECT id, CAST(stboxTmin(b) AS text), stboxXmin(b), temporalAsMfjson(g) FROM s"
+	want := "SELECT id, CAST(stboxTmin(b) AS string), stboxXmin(b), temporalAsMfjson(g) FROM s"
 	if got != want {
 		t.Errorf("rewriteSparkSQL\n got %q\nwant %q", got, want)
 	}

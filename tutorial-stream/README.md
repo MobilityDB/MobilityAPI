@@ -27,6 +27,14 @@ through the same line-protocol contract; see [`kafka/README.md`](kafka/README.md
 for its bridge job and configuration (`MFAPI_KAFKA_CMD`, `MFAPI_KAFKA_LIBPATH`). A
 Spark Structured Streaming engine plugs in the same way.
 
+`MFAPI_STREAM_ENGINE` sets the tier's default engine; a single running tier can
+also switch engines per query — a query may carry `"engine": "flink" | "kafka" |
+"meos-local"` in its `POST …/queries` body to run on that engine regardless of the
+default (empty uses the default). The query's response reports the engine that
+served it in its `engine` field, so the tutorial can drive Flink, Kafka and the
+in-process engine live in one tier (each named cluster engine still requires its
+`MFAPI_<RUNTIME>_CMD`, and fails loudly if unset).
+
 ## Prerequisites
 
 - The Go tier built **with the streaming engine** and reachable on

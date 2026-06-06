@@ -47,6 +47,40 @@ func (h *fakeHandle) Status() string        { return h.status }
 func (h *fakeHandle) Stop() error           { return nil }
 
 // liftedOps marks the operations needing a scalar operand; the rest are unary.
+// TestEngineForRouting measures per-query engine switching: a single tier routes
+// distinct engine names to distinct engines, fails loudly when a cluster engine
+// is unconfigured, rejects unknown names, and caches each engine.
+func TestEngineForRouting(t *testing.T) {
+	t.Setenv("MFAPI_FLINK_CMD", "/bin/echo flink-bridge")
+	t.Setenv("MFAPI_KAFKA_CMD", "/bin/echo kafka-bridge")
+
+	fl, err := engineFor("flink")
+	if err != nil || fl.Name() != "flink" {
+		t.Fatalf("engineFor(flink) = %v, %v; want a flink engine", fl, err)
+	}
+	ka, err := engineFor("kafka")
+	if err != nil || ka.Name() != "kafka" {
+		t.Fatalf("engineFor(kafka) = %v, %v; want a kafka engine", ka, err)
+	}
+	if fl == ka {
+		t.Fatal("flink and kafka resolved to the same engine instance")
+	}
+	if again, _ := engineFor("flink"); again != fl {
+		t.Fatal("engineFor(flink) is not cached (returned a new instance)")
+	}
+	if _, err := engineFor("bogus"); err == nil {
+		t.Fatal("engineFor(bogus) should reject an unknown engine name")
+	}
+}
+
+func TestEngineForFailsLoudWhenUnconfigured(t *testing.T) {
+	delete(engCache, "kafka")
+	t.Setenv("MFAPI_KAFKA_CMD", "")
+	if _, err := engineFor("kafka"); err == nil {
+		t.Fatal("engineFor(kafka) without MFAPI_KAFKA_CMD should fail loudly, not fall back")
+	}
+}
+
 func TestLiftedOpsCatalogue(t *testing.T) {
 	for _, op := range []string{"ln", "exp", "abs", "degrees"} {
 		if info, ok := liftedOps[op]; !ok || info.needsArg {

@@ -53,6 +53,7 @@ type QuerySpec struct {
 	Window   Window        // the window over which Agg is computed
 	Ptype    string        // the property's OGC type (TReal | TInt | TText | TBool)
 	Interval time.Duration // pacing between emitted records
+	Engine   string        // per-query engine override ("flink"|"kafka"|"meos-local"); empty = the process default
 }
 
 // Window is a continuous-query window (OGC MF Part 4). COUNT groups a fixed
@@ -156,6 +157,46 @@ func streamEngine() (StreamEngine, error) {
 		return nil, err
 	}
 	engInst, engOK = e, true
+	return e, nil
+}
+
+var (
+	engCacheMu sync.Mutex
+	engCache   = map[string]StreamEngine{}
+)
+
+// engineFor returns the engine for a per-query override name, built once per name
+// and cached. An empty name uses the process default (streamEngine). This lets a
+// single running tier serve flink, kafka and meos-local queries side by side, so
+// the tutorial can switch engines live without restarting.
+func engineFor(name string) (StreamEngine, error) {
+	name = strings.ToLower(strings.TrimSpace(name))
+	if name == "" {
+		return streamEngine()
+	}
+	engCacheMu.Lock()
+	defer engCacheMu.Unlock()
+	if e, ok := engCache[name]; ok {
+		return e, nil
+	}
+	var (
+		e   StreamEngine
+		err error
+	)
+	switch name {
+	case "flink":
+		e, err = newFlinkEngine()
+	case "kafka":
+		e, err = newKafkaEngine()
+	case "meos", "meos-local", "local":
+		e, err = defaultStreamEngine()
+	default:
+		return nil, fmt.Errorf("unknown stream engine %q (flink|kafka|meos-local)", name)
+	}
+	if err != nil {
+		return nil, err
+	}
+	engCache[name] = e
 	return e, nil
 }
 
@@ -353,6 +394,12 @@ func cqueryLink(r *http.Request, cq *contQuery) map[string]any {
 	}
 	self := scheme + "://" + r.Host + cq.basePath() + "/" + cq.id
 	stream := self + "/stream"
+	engName := cq.spec.Engine
+	if engName == "" {
+		if e, err := streamEngine(); err == nil {
+			engName = e.Name()
+		}
+	}
 	return map[string]any{
 		"rel":       "cquery",
 		"queryId":   cq.id,
@@ -361,6 +408,7 @@ func cqueryLink(r *http.Request, cq *contQuery) map[string]any {
 		"status":    cq.status(),
 		"type":      "text/event-stream",
 		"operation": cq.spec.Op,
+		"engine":    engName,
 		"links": []map[string]string{
 			{"rel": "self", "href": self},
 			{"rel": "stream", "href": stream, "type": "text/event-stream"},
@@ -497,8 +545,9 @@ func postQuery(w http.ResponseWriter, r *http.Request) {
 			Hop     int    `json:"hop"`
 			HopUnit string `json:"hopUnit"`
 		} `json:"window"`
-		Live       bool `json:"live"`
-		IntervalMs int  `json:"intervalMs"`
+		Live       bool   `json:"live"`
+		IntervalMs int    `json:"intervalMs"`
+		Engine     string `json:"engine"`
 	}
 	if r.Body != nil {
 		json.NewDecoder(r.Body).Decode(&body)
@@ -508,7 +557,8 @@ func postQuery(w http.ResponseWriter, r *http.Request) {
 		interval = 500 * time.Millisecond
 	}
 
-	spec := QuerySpec{CID: cid, FID: fid, Pname: name, Ptype: ogc, Interval: interval}
+	spec := QuerySpec{CID: cid, FID: fid, Pname: name, Ptype: ogc, Interval: interval,
+		Engine: strings.ToLower(strings.TrimSpace(body.Engine))}
 	if agg := strings.ToUpper(strings.TrimSpace(body.Aggregation)); agg != "" {
 		// windowed aggregation, valid per property type
 		if !aggByType[ogc][agg] {
@@ -555,7 +605,7 @@ func postQuery(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	eng, err := streamEngine()
+	eng, err := engineFor(spec.Engine)
 	if err != nil {
 		httpErr(w, 501, err.Error())
 		return

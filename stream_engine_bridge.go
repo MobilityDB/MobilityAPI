@@ -1,15 +1,17 @@
-// flinkEngine is the cluster-engine realization of the StreamEngine seam: it
-// runs each continuous query as a Flink DataStream job (MobilityFlink's
-// MeosStatelessMap wiring over JMEOS) and bridges the job's output back into the
-// control plane's SSE delivery. The control plane is unchanged — register,
-// lifecycle and SSE are identical to the in-process meos-local engine; only the
-// per-record execution moves to Flink, where MEOS runs as a JMEOS UDF (no SQL).
+// bridgeEngine is the cluster-engine realization of the StreamEngine seam shared
+// by every external streaming runtime (Flink, Kafka Streams, …): it runs each
+// continuous query as a job in that runtime and bridges the job's output back
+// into the control plane's SSE delivery. The control plane is unchanged —
+// register, lifecycle and SSE are identical to the in-process meos-local engine;
+// only the per-record execution moves to the runtime, where MEOS runs as a JMEOS
+// UDF (no SQL).
 //
 // The engine is pure Go (it spawns the bridge job and pipes through it), so it
-// builds without cgo. The job command is configured by MFAPI_FLINK_CMD (the
-// command prefix; the operation and its scalar argument are appended) and
-// MFAPI_FLINK_LIBPATH (the libmeos path passed as LD_LIBRARY_PATH). Select it
-// with MFAPI_STREAM_ENGINE=flink.
+// builds without cgo. The job command is configured by <RUNTIME>_CMD (the command
+// prefix; the operation and its scalar argument are appended) and <RUNTIME>_LIBPATH
+// (the libmeos path passed as LD_LIBRARY_PATH): MFAPI_FLINK_CMD/MFAPI_FLINK_LIBPATH
+// for Flink (MFAPI_STREAM_ENGINE=flink), MFAPI_KAFKA_CMD/MFAPI_KAFKA_LIBPATH for
+// Kafka Streams (MFAPI_STREAM_ENGINE=kafka).
 //
 // One float per line goes to the job's stdin; one transformed float per line
 // comes back on stdout, in order (the job runs at parallelism 1), so each output
@@ -19,7 +21,6 @@ package main
 import (
 	"bufio"
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -29,24 +30,33 @@ import (
 	"sync"
 )
 
-func newFlinkEngine() (StreamEngine, error) {
-	cmd := os.Getenv("MFAPI_FLINK_CMD")
+func newBridgeEngine(name, cmdEnv, libEnv string) (StreamEngine, error) {
+	cmd := os.Getenv(cmdEnv)
 	if strings.TrimSpace(cmd) == "" {
-		return nil, errors.New("flink engine requires MFAPI_FLINK_CMD (the bridge-job command prefix)")
+		return nil, fmt.Errorf("%s engine requires %s (the bridge-job command prefix)", name, cmdEnv)
 	}
-	return &flinkEngine{argv: strings.Fields(cmd), libPath: os.Getenv("MFAPI_FLINK_LIBPATH")}, nil
+	return &bridgeEngine{name: name, argv: strings.Fields(cmd), libPath: os.Getenv(libEnv)}, nil
 }
 
-type flinkEngine struct {
+func newFlinkEngine() (StreamEngine, error) {
+	return newBridgeEngine("flink", "MFAPI_FLINK_CMD", "MFAPI_FLINK_LIBPATH")
+}
+
+func newKafkaEngine() (StreamEngine, error) {
+	return newBridgeEngine("kafka", "MFAPI_KAFKA_CMD", "MFAPI_KAFKA_LIBPATH")
+}
+
+type bridgeEngine struct {
+	name    string
 	argv    []string
 	libPath string
 }
 
-func (e *flinkEngine) Name() string { return "flink" }
+func (e *bridgeEngine) Name() string { return e.name }
 
-func (e *flinkEngine) Submit(ctx context.Context, spec QuerySpec, source <-chan Instant) (QueryHandle, error) {
+func (e *bridgeEngine) Submit(ctx context.Context, spec QuerySpec, source <-chan Instant) (QueryHandle, error) {
 	if spec.Agg != "" {
-		return nil, fmt.Errorf("the flink engine runs transforms; windowed aggregation is served by the in-process engine")
+		return nil, fmt.Errorf("the %s engine runs transforms; windowed aggregation is served by the in-process engine", e.name)
 	}
 	info, ok := liftedOps[spec.Op]
 	if !ok {
@@ -72,10 +82,10 @@ func (e *flinkEngine) Submit(ctx context.Context, spec QuerySpec, source <-chan 
 		return nil, err
 	}
 	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("start flink bridge job: %w", err)
+		return nil, fmt.Errorf("start %s bridge job: %w", e.name, err)
 	}
 
-	h := &flinkHandle{results: make(chan Event, 64), status: "running"}
+	h := &bridgeHandle{results: make(chan Event, 64), status: "running"}
 	ts := make(chan string, 1024) // source timestamps, paired with outputs by order
 
 	// feeder: source instant values → the job's stdin (one float per line).
@@ -136,23 +146,23 @@ func (e *flinkEngine) Submit(ctx context.Context, spec QuerySpec, source <-chan 
 	return h, nil
 }
 
-// flinkHandle exposes the result channel and the live status of a query running
-// on the Flink bridge job.
-type flinkHandle struct {
+// bridgeHandle exposes the result channel and the live status of a query running
+// on a bridge-job runtime (Flink, Kafka Streams, …).
+type bridgeHandle struct {
 	results chan Event
 	mu      sync.Mutex
 	status  string
 }
 
-func (h *flinkHandle) Results() <-chan Event { return h.results }
+func (h *bridgeHandle) Results() <-chan Event { return h.results }
 
-func (h *flinkHandle) Status() string {
+func (h *bridgeHandle) Status() string {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return h.status
 }
 
-func (h *flinkHandle) setStatus(s string) {
+func (h *bridgeHandle) setStatus(s string) {
 	h.mu.Lock()
 	h.status = s
 	h.mu.Unlock()
@@ -160,4 +170,4 @@ func (h *flinkHandle) setStatus(s string) {
 
 // Stop is a no-op: the control plane cancels the context, which kills the bridge
 // job subprocess (exec.CommandContext) and ends the feeder/reader goroutines.
-func (h *flinkHandle) Stop() error { return nil }
+func (h *bridgeHandle) Stop() error { return nil }

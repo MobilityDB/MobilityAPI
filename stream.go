@@ -122,14 +122,18 @@ type QueryHandle interface {
 // fake engine.
 var makeEngine = selectEngine
 
-// selectEngine picks the streaming engine from MFAPI_STREAM_ENGINE: "flink"
-// runs queries as Flink DataStream jobs (cluster engine); anything else uses the
-// in-process meos-local engine (defaultStreamEngine, defined per build tag — the
-// cgo MEOS engine under -tags meos, a stub otherwise). Both sit behind the same
+// selectEngine picks the streaming engine from MFAPI_STREAM_ENGINE: "flink" runs
+// queries as Flink DataStream jobs and "kafka" as Kafka Streams jobs (both cluster
+// engines bridged over the same line protocol); anything else uses the in-process
+// meos-local engine (defaultStreamEngine, defined per build tag — the cgo MEOS
+// engine under -tags meos, a stub otherwise). All sit behind the same
 // StreamEngine seam.
 func selectEngine() (StreamEngine, error) {
-	if strings.EqualFold(os.Getenv("MFAPI_STREAM_ENGINE"), "flink") {
+	switch strings.ToLower(os.Getenv("MFAPI_STREAM_ENGINE")) {
+	case "flink":
 		return newFlinkEngine()
+	case "kafka":
+		return newKafkaEngine()
 	}
 	return defaultStreamEngine()
 }

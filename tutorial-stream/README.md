@@ -22,8 +22,10 @@ The engine is chosen where the tier starts, not in the notebook:
   job; the tier itself needs no MEOS. See [`flink/README.md`](flink/README.md) for
   the bridge job and its configuration (`MFAPI_FLINK_CMD`, `MFAPI_FLINK_LIBPATH`).
 
-A Kafka Streams or Spark Structured Streaming engine plugs into the same seam
-through the same line-protocol contract.
+The Kafka Streams engine (`MFAPI_STREAM_ENGINE=kafka`) plugs into the same seam
+through the same line-protocol contract; see [`kafka/README.md`](kafka/README.md)
+for its bridge job and configuration (`MFAPI_KAFKA_CMD`, `MFAPI_KAFKA_LIBPATH`). A
+Spark Structured Streaming engine plugs in the same way.
 
 ## Prerequisites
 

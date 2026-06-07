@@ -21,9 +21,6 @@ package main
 #cgo LDFLAGS: -lmeos
 #include <stdlib.h>
 #include <meos.h>
-
-// degrees takes a normalize flag; wrap it so the Go side needs no C bool.
-static Temporal *mfs_tfloat_degrees(const Temporal *t) { return tfloat_degrees(t, false); }
 */
 import "C"
 
@@ -278,7 +275,7 @@ func liftInstant(op string, arg float64, in Instant) (Instant, error) {
 	case "abs":
 		res = C.tnumber_abs(temp)
 	case "degrees":
-		res = C.mfs_tfloat_degrees(temp)
+		res = C.tfloat_degrees(temp, false)
 	case "radians":
 		res = C.tfloat_radians(temp)
 	case "add":

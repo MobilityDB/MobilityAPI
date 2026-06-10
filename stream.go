@@ -208,9 +208,7 @@ type opInfo struct {
 }
 
 // liftedOps is the catalogue of scalar operations a continuous transform can
-// apply to a tfloat stream. Every entry is a MEOS lifted temporal function that
-// exists today, so the POC needs no kernel change. (sin/cos/tan join this set
-// once MEOS adds them; arithmetic and the listed math functions are present.)
+// apply to a tfloat stream. Every entry maps to a MEOS lifted temporal function.
 var liftedOps = map[string]opInfo{
 	"ln":      {false, "natural logarithm"},
 	"exp":     {false, "exponential"},
@@ -220,6 +218,9 @@ var liftedOps = map[string]opInfo{
 	"abs":     {false, "absolute value"},
 	"degrees": {false, "radians to degrees"},
 	"radians": {false, "degrees to radians"},
+	"sin":     {false, "sine"},
+	"cos":     {false, "cosine"},
+	"tan":     {false, "tangent"},
 	"add":     {true, "add a scalar"},
 	"sub":     {true, "subtract a scalar"},
 	"mul":     {true, "multiply by a scalar"},

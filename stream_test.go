@@ -92,8 +92,10 @@ func TestLiftedOpsCatalogue(t *testing.T) {
 			t.Errorf("%s should be a known scalar-arg op", op)
 		}
 	}
-	if _, ok := liftedOps["sin"]; ok {
-		t.Error("sin is not in MEOS yet and must not be advertised")
+	for _, op := range []string{"sin", "cos", "tan"} {
+		if info, ok := liftedOps[op]; !ok || info.needsArg {
+			t.Errorf("%s should be a known unary op", op)
+		}
 	}
 }
 

@@ -49,6 +49,9 @@ public class MfStreamBridgeJob {
             case "abs":     r = GeneratedFunctions.tnumber_abs(t); break;
             case "degrees": r = GeneratedFunctions.tfloat_degrees(t, false); break;
             case "radians": r = GeneratedFunctions.tfloat_radians(t); break;
+            case "sin":     r = GeneratedFunctions.tfloat_sin(t); break;
+            case "cos":     r = GeneratedFunctions.tfloat_cos(t); break;
+            case "tan":     r = GeneratedFunctions.tfloat_tan(t); break;
             case "add":     r = GeneratedFunctions.add_tfloat_float(t, arg); break;
             case "sub":     r = GeneratedFunctions.sub_tfloat_float(t, arg); break;
             case "mul":     r = GeneratedFunctions.mul_tfloat_float(t, arg); break;

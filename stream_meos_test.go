@@ -36,6 +36,9 @@ func TestMeosTransform(t *testing.T) {
 		{"div", 4, 10, 2.5},
 		{"degrees", 0, math.Pi, 180},
 		{"radians", 0, 180, math.Pi},
+		{"sin", 0, math.Pi / 2, 1},
+		{"cos", 0, 0, 1},
+		{"tan", 0, math.Pi / 4, 1},
 	}
 	for _, c := range cases {
 		ctx, cancel := context.WithCancel(context.Background())

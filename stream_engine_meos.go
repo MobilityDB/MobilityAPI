@@ -278,6 +278,12 @@ func liftInstant(op string, arg float64, in Instant) (Instant, error) {
 		res = C.tfloat_degrees(temp, false)
 	case "radians":
 		res = C.tfloat_radians(temp)
+	case "sin":
+		res = C.tfloat_sin(temp)
+	case "cos":
+		res = C.tfloat_cos(temp)
+	case "tan":
+		res = C.tfloat_tan(temp)
 	case "add":
 		res = C.add_tfloat_float(temp, C.double(arg))
 	case "sub":

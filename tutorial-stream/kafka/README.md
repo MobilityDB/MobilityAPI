@@ -53,5 +53,5 @@ engine: one input float per line in, one transformed float per line out, in orde
 (the topology runs at parallelism 1). The tier pairs each output with its source
 instant's timestamp. The same tutorial drives the Flink and Kafka engines by
 switching `MFAPI_STREAM_ENGINE`; both serve the identical lifted-operation set
-(`ln, exp, log10, ceil, floor, abs, degrees, radians, add, sub, mul, div`) and
-delegate windowed aggregation to the in-process engine.
+(`ln, exp, log10, ceil, floor, abs, degrees, radians, sin, cos, tan, add, sub,
+mul, div`) and delegate windowed aggregation to the in-process engine.

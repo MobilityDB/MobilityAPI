@@ -228,3 +228,52 @@ func TestATSTGSequenceGetSuccess(t *testing.T) {
 		}
 	})
 }
+
+// The two readings of tgsequence-get-success cannot both be met, which is what
+// turns "the standard disagrees with itself" into a defect an implementation
+// cannot work around. `type` is one JSON string: Annex A step 1 requires
+// "MovingGeometryCollection", the schema its own step 8 points at admits only
+// "TemporalGeometrySequence", and no document carries both. The tier follows
+// the schema, because that is the artefact a validator runs and the one the
+// abstract test itself cites.
+//
+// This test states the choice so a reader of the suite finds the reasoning
+// rather than an unexplained constant, and so a change to either side of the
+// contradiction surfaces here.
+func TestATSTGSequenceTypeContradiction(t *testing.T) {
+	const schemaEnum = "TemporalGeometrySequence" // temporalGeometrySequence.yaml, type.enum
+	const prose = "MovingGeometryCollection"      // Annex A tgsequence-get-success, step 1
+	if schemaEnum == prose {
+		t.Fatal("the contradiction this test records is gone; simplify the suite")
+	}
+	f := atsCollectionsBackend()
+	f.answers = append(f.answers,
+		fakeAnswer{match: "SELECT 1 FROM", rows: [][]any{{1}}},
+		fakeAnswer{match: "SELECT numSequences(", rows: [][]any{{1}}},
+		fakeAnswer{match: "SELECT asMFJSON(", rows: [][]any{{`{"type":"MovingPoint","coordinates":[[4.35,50.85]],"datetimes":["2026-01-01T00:00:00+00"],"interpolation":"Linear"}`}}},
+	)
+	withBackend(f, func() {
+		req := httptest.NewRequest("GET", "/collections/ships/items/1/tgsequence", nil)
+		req.SetPathValue("cid", "ships")
+		req.SetPathValue("fid", "1")
+		rec := httptest.NewRecorder()
+		tgSequence(rec, req)
+		var doc map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &doc); err != nil {
+			t.Fatal(err)
+		}
+		got, _ := doc["type"].(string)
+		if got != schemaEnum {
+			t.Errorf("type = %q, want the schema enum %q", got, schemaEnum)
+		}
+		if got == prose {
+			t.Errorf("type = %q satisfies the prose, so the schema enum is violated", got)
+		}
+		if _, ok := doc["geometrySequence"]; !ok {
+			t.Error("geometrySequence is required by the schema")
+		}
+		if _, ok := doc["prism"]; ok {
+			t.Error("prism is the prose's spelling; the schema names geometrySequence")
+		}
+	})
+}

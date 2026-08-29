@@ -124,6 +124,7 @@ func main() {
 	mux.HandleFunc("POST /collections/{cid}/items/{fid}/tproperties", postTProperties)
 	mux.HandleFunc("POST /collections/{cid}/items/{fid}/tproperties/{pname}", postTPropertyValues)
 	mux.HandleFunc("DELETE /collections/{cid}/items/{fid}/tproperties/{pname}", deleteTProperty)
+	mux.HandleFunc("DELETE /collections/{cid}/items/{fid}/tproperties/{pname}/{tvid}", deleteTPropertyValue)
 	mux.HandleFunc("DELETE /collections/{cid}/items/{fid}/tgsequence/{tgid}", deleteTgSequence)
 	// MF Part 4 (Stream Extension): continuous queries on a temporal property,
 	// delivered over Server-Sent Events.
@@ -1087,6 +1088,9 @@ func apiDoc(w http.ResponseWriter, r *http.Request) {
 				"post":   op("Append values to a temporal property (temporally disjoint; overlap → 409)"),
 				"delete": op("Delete a temporal property"),
 			},
+			"/collections/{cid}/items/{fid}/tproperties/{pname}/{tvid}": map[string]any{
+				"delete": op("Delete a temporal primitive value (member value sequence) by its 1-based id"),
+			},
 			"/collections/{cid}/items/{fid}/tproperties/{pname}/queries": map[string]any{
 				"get":  op("List the continuous queries on a temporal property"),
 				"post": op("Register a continuous query (MF Part 4): a lifted transform (operation), or a windowed aggregation (aggregation + window: COUNT | TUMBLING | HOPPING). Set live:true to source from pushed records"),
@@ -1641,6 +1645,68 @@ func deleteTProperty(w http.ResponseWriter, r *http.Request) {
 	}
 	if ct == 0 {
 		httpErr(w, 404, "unknown temporal property: "+name)
+		return
+	}
+	w.WriteHeader(204)
+}
+
+// deleteTPropertyValue removes one temporal primitive value from a stored
+// temporal property, addressed by its 1-based index into the property's
+// composing sequences. SIBLING-FROM deleteTgSequence, which addresses a
+// temporal primitive geometry of the same feature the same way.
+func deleteTPropertyValue(w http.ResponseWriter, r *http.Request) {
+	cid, name := r.PathValue("cid"), r.PathValue("pname")
+	if _, _, ok := collectionMeta(r.Context(), cid); !ok {
+		httpErr(w, 404, "collection not found")
+		return
+	}
+	fid, err := strconv.Atoi(r.PathValue("fid"))
+	if err != nil {
+		httpErr(w, 400, "invalid feature id")
+		return
+	}
+	tv, err := strconv.Atoi(r.PathValue("tvid"))
+	if err != nil || tv < 1 {
+		httpErr(w, 400, "invalid temporal value id (1-based index into the property's values)")
+		return
+	}
+	var ptype string
+	err = db.QueryRow(r.Context(), "SELECT ptype FROM mf_tproperty WHERE cid=$1 AND fid=$2 AND name=$3", cid, fid, name).Scan(&ptype)
+	if errors.Is(err, ErrNoRows) {
+		httpErr(w, 404, "unknown temporal property: "+name)
+		return
+	}
+	if err != nil {
+		httpErr(w, 500, err.Error())
+		return
+	}
+	tt, ok := tPropType(ptype)
+	if !ok {
+		httpErr(w, 500, "stored property has an unknown type: "+ptype)
+		return
+	}
+	var nseq *int
+	err = db.QueryRow(r.Context(),
+		"SELECT numSequences("+tt.col+") FROM mf_tproperty WHERE cid=$1 AND fid=$2 AND name=$3", cid, fid, name).Scan(&nseq)
+	if err != nil {
+		httpErr(w, 400, err.Error())
+		return
+	}
+	if nseq == nil || tv > *nseq {
+		httpErr(w, 404, "no temporal value #"+itoa(tv)+" for this property")
+		return
+	}
+	if *nseq == 1 {
+		httpErr(w, 409, "the property has a single temporal value; delete the property (DELETE .../tproperties/{pname}) to remove it")
+		return
+	}
+	// Remove the value by deleting its time span; deleteTime drops a whole
+	// composing sequence and keeps the other values distinct.
+	_, err = db.Exec(r.Context(),
+		"UPDATE mf_tproperty SET "+tt.col+" = deleteTime("+tt.col+", getTime(sequenceN("+tt.col+", $4))) WHERE cid=$1 AND fid=$2 AND name=$3",
+		cid, fid, name, tv)
+	if err != nil {
+		httpErr(w, 400, "delete failed: "+err.Error())
 		return
 	}
 	w.WriteHeader(204)

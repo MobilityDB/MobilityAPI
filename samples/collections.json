@@ -1,0 +1,59 @@
+{
+  "collections": [
+    {
+      "crs": [
+        "http://www.opengis.net/def/crs/EPSG/0/25832"
+      ],
+      "description": "A fixed two-feature corpus for the OGC API - Moving Features Part 1 abstract tests",
+      "id": "conformance",
+      "itemType": "movingfeature",
+      "links": [
+        {
+          "href": "/collections/conformance",
+          "rel": "self"
+        },
+        {
+          "href": "/collections/conformance/items",
+          "rel": "items"
+        },
+        {
+          "href": "/collections/conformance/export",
+          "rel": "enclosure",
+          "type": "application/x-ndjson"
+        }
+      ],
+      "title": "conformance"
+    },
+    {
+      "crs": [
+        "http://www.opengis.net/def/crs/EPSG/0/25832"
+      ],
+      "description": "A second collection, so a delete cannot pass by acting on the only one",
+      "id": "conformance_alt",
+      "itemType": "movingfeature",
+      "links": [
+        {
+          "href": "/collections/conformance_alt",
+          "rel": "self"
+        },
+        {
+          "href": "/collections/conformance_alt/items",
+          "rel": "items"
+        },
+        {
+          "href": "/collections/conformance_alt/export",
+          "rel": "enclosure",
+          "type": "application/x-ndjson"
+        }
+      ],
+      "title": "conformance_alt"
+    }
+  ],
+  "links": [
+    {
+      "href": "/collections",
+      "rel": "self"
+    }
+  ]
+}
+

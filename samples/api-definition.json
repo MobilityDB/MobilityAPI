@@ -1,0 +1,563 @@
+{
+  "info": {
+    "description": "OGC API – Moving Features over MobilityDB",
+    "title": "MobilityAPI-go",
+    "version": "1.0.0"
+  },
+  "openapi": "3.0.3",
+  "paths": {
+    "/": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "summary": "Landing page"
+      }
+    },
+    "/api": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "summary": "API definition"
+      }
+    },
+    "/collections": {
+      "get": {
+        "parameters": [
+          {
+            "description": "The optional limit parameter limits the number of items presented in the response document.",
+            "explode": false,
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 10000,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "style": "form"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "summary": "Moving feature collections"
+      },
+      "post": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "summary": "Register a new collection"
+      }
+    },
+    "/collections/{cid}": {
+      "delete": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "summary": "Delete a collection"
+      },
+      "get": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "summary": "Collection metadata"
+      },
+      "put": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "summary": "Replace collection metadata"
+      }
+    },
+    "/collections/{cid}/bulk": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "summary": "Bulk ingest (extension): a batch of (vehicleId, position, time) observations as GeoJSON Points or GeoParquet, optionally gzip/deflate/br/zstd-compressed; each is appended as one instant"
+      }
+    },
+    "/collections/{cid}/export": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "summary": "Bulk lakehouse export: NDJSON, or ?format=parquet (WKB + bbox/time sidecar)"
+      }
+    },
+    "/collections/{cid}/items": {
+      "get": {
+        "parameters": [
+          {
+            "description": "The optional limit parameter limits the number of items presented in the response document.",
+            "explode": false,
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 10000,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "style": "form"
+          },
+          {
+            "description": "Only features whose geometry intersects the bounding box are selected.",
+            "explode": false,
+            "in": "query",
+            "name": "bbox",
+            "required": false,
+            "schema": {
+              "items": {
+                "type": "number"
+              },
+              "maxItems": 6,
+              "minItems": 4,
+              "type": "array"
+            },
+            "style": "form"
+          },
+          {
+            "description": "Either a date-time or an interval. Only features that have a temporal geometry or temporal property that intersects the value are selected.",
+            "explode": false,
+            "in": "query",
+            "name": "datetime",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "style": "form"
+          },
+          {
+            "description": "Only a subsequence of the temporal geometry clipped to the datetime interval is returned. The datetime parameter is then a bounded interval and the leaf parameter is not used.",
+            "explode": false,
+            "in": "query",
+            "name": "subTrajectory",
+            "required": false,
+            "schema": {
+              "default": false,
+              "type": "boolean"
+            },
+            "style": "form"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "summary": "Moving features (streamed, keyset-paged; bbox/datetime/subtrajectory filters)"
+      },
+      "post": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "summary": "Insert a moving feature"
+      }
+    },
+    "/collections/{cid}/items/{fid}": {
+      "delete": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "summary": "Delete a moving feature"
+      },
+      "get": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "summary": "A moving feature as a Feature"
+      },
+      "put": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "summary": "Replace a moving feature"
+      }
+    },
+    "/collections/{cid}/items/{fid}/tgsequence": {
+      "get": {
+        "parameters": [
+          {
+            "description": "The optional limit parameter limits the number of items presented in the response document.",
+            "explode": false,
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 10000,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "style": "form"
+          },
+          {
+            "description": "Only features whose geometry intersects the bounding box are selected.",
+            "explode": false,
+            "in": "query",
+            "name": "bbox",
+            "required": false,
+            "schema": {
+              "items": {
+                "type": "number"
+              },
+              "maxItems": 6,
+              "minItems": 4,
+              "type": "array"
+            },
+            "style": "form"
+          },
+          {
+            "description": "Either a date-time or an interval. Only features that have a temporal geometry or temporal property that intersects the value are selected.",
+            "explode": false,
+            "in": "query",
+            "name": "datetime",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "style": "form"
+          },
+          {
+            "description": "Only features with a temporal geometry or temporal property that intersect the given date-times are selected. The date-times are given as a comma-separated list.",
+            "explode": false,
+            "in": "query",
+            "name": "leaf",
+            "required": false,
+            "schema": {
+              "items": {
+                "format": "date-time",
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "style": "form"
+          },
+          {
+            "description": "Only a subsequence of the temporal geometry clipped to the datetime interval is returned. The datetime parameter is then a bounded interval and the leaf parameter is not used.",
+            "explode": false,
+            "in": "query",
+            "name": "subTrajectory",
+            "required": false,
+            "schema": {
+              "default": false,
+              "type": "boolean"
+            },
+            "style": "form"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "summary": "Temporal geometry sequence (TemporalGeometrySequence; members addressable by their 1-based id)"
+      },
+      "post": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "summary": "Append a temporally-disjoint member sequence"
+      }
+    },
+    "/collections/{cid}/items/{fid}/tgsequence/queries": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "summary": "List the geometry (position) continuous queries of a feature"
+      },
+      "post": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "summary": "Register a geometry continuous query streaming the moving feature's position"
+      }
+    },
+    "/collections/{cid}/items/{fid}/tgsequence/queries/{qid}": {
+      "delete": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "summary": "Stop a geometry continuous query"
+      },
+      "get": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "summary": "Geometry continuous-query status (the cquery link object)"
+      }
+    },
+    "/collections/{cid}/items/{fid}/tgsequence/queries/{qid}/stream": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "summary": "Moving-feature positions as Server-Sent Events (see api/streaming-asyncapi.yaml)"
+      }
+    },
+    "/collections/{cid}/items/{fid}/tgsequence/{tgid}": {
+      "delete": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "summary": "Delete a temporal primitive geometry (member sequence) by id"
+      }
+    },
+    "/collections/{cid}/items/{fid}/tgsequence/{tgid}/{qtype}": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "summary": "Derived query on a member geometry: distance | velocity (acceleration → 501, not derivable for this motion model)"
+      }
+    },
+    "/collections/{cid}/items/{fid}/tproperties": {
+      "get": {
+        "parameters": [
+          {
+            "description": "The optional limit parameter limits the number of items presented in the response document.",
+            "explode": false,
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 10000,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "style": "form"
+          },
+          {
+            "description": "Either a date-time or an interval. Only features that have a temporal geometry or temporal property that intersects the value are selected.",
+            "explode": false,
+            "in": "query",
+            "name": "datetime",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "style": "form"
+          },
+          {
+            "description": "Only a subsequence of the temporal property clipped to the datetime interval is returned. The datetime parameter is then a bounded interval and the leaf parameter is not used.",
+            "explode": false,
+            "in": "query",
+            "name": "subTemporalValue",
+            "required": false,
+            "schema": {
+              "default": false,
+              "type": "boolean"
+            },
+            "style": "form"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "summary": "Stored temporal properties of a feature"
+      },
+      "post": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "summary": "Add one or more temporal properties (TReal | TInteger | TText | TBoolean) to a feature"
+      }
+    },
+    "/collections/{cid}/items/{fid}/tproperties/{pname}": {
+      "delete": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "summary": "Delete a temporal property"
+      },
+      "get": {
+        "parameters": [
+          {
+            "description": "Either a date-time or an interval. Only features that have a temporal geometry or temporal property that intersects the value are selected.",
+            "explode": false,
+            "in": "query",
+            "name": "datetime",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "style": "form"
+          },
+          {
+            "description": "Only features with a temporal geometry or temporal property that intersect the given date-times are selected. The date-times are given as a comma-separated list.",
+            "explode": false,
+            "in": "query",
+            "name": "leaf",
+            "required": false,
+            "schema": {
+              "items": {
+                "format": "date-time",
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "style": "form"
+          },
+          {
+            "description": "Only a subsequence of the temporal property clipped to the datetime interval is returned. The datetime parameter is then a bounded interval and the leaf parameter is not used.",
+            "explode": false,
+            "in": "query",
+            "name": "subTemporalValue",
+            "required": false,
+            "schema": {
+              "default": false,
+              "type": "boolean"
+            },
+            "style": "form"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "summary": "A stored temporal property as an OGC temporalProperty"
+      },
+      "post": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "summary": "Append values to a temporal property (temporally disjoint; overlap → 409)"
+      }
+    },
+    "/collections/{cid}/items/{fid}/tproperties/{pname}/ingest": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "summary": "Push a live record ({datetime, value}) to the live queries on the property"
+      }
+    },
+    "/collections/{cid}/items/{fid}/tproperties/{pname}/queries": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "summary": "List the continuous queries on a temporal property"
+      },
+      "post": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "summary": "Register a continuous query (MF Part 4): a lifted transform (operation), or a windowed aggregation (aggregation + window: COUNT | TUMBLING | HOPPING). Set live:true to source from pushed records"
+      }
+    },
+    "/collections/{cid}/items/{fid}/tproperties/{pname}/queries/{qid}": {
+      "delete": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "summary": "Stop a continuous query"
+      },
+      "get": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "summary": "Continuous-query status (the cquery link object)"
+      }
+    },
+    "/collections/{cid}/items/{fid}/tproperties/{pname}/queries/{qid}/stream": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "summary": "Continuous-query results as Server-Sent Events (see api/streaming-asyncapi.yaml)"
+      }
+    },
+    "/collections/{cid}/items/{fid}/tproperties/{pname}/{tvid}": {
+      "delete": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "summary": "Delete a temporal primitive value (member value sequence) by its 1-based id"
+      }
+    },
+    "/conformance": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "summary": "Conformance declaration"
+      }
+    }
+  }
+}
+

@@ -5,3 +5,6 @@ MobilityAPI-go
 mfapi
 mfapi-meos
 live.log
+
+# the sample set the CI freshness check re-emits for comparison
+samples.emitted/

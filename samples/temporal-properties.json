@@ -1,0 +1,60 @@
+{
+  "links": [
+    {
+      "href": "/collections/conformance/items/1/tproperties",
+      "rel": "self"
+    }
+  ],
+  "numberMatched": 4,
+  "numberReturned": 4,
+  "temporalProperties": [
+    {
+      "description": "Whether the vessel is at anchor",
+      "links": [
+        {
+          "href": "/collections/conformance/items/1/tproperties/anchored",
+          "rel": "self"
+        }
+      ],
+      "name": "anchored",
+      "type": "TBoolean"
+    },
+    {
+      "description": "Course over ground",
+      "form": "http://www.opengis.net/def/uom/UCUM/0/deg",
+      "links": [
+        {
+          "href": "/collections/conformance/items/1/tproperties/heading",
+          "rel": "self"
+        }
+      ],
+      "name": "heading",
+      "type": "TInteger"
+    },
+    {
+      "description": "Speed over ground",
+      "form": "http://www.opengis.net/def/uom/UCUM/0/km_h-1",
+      "links": [
+        {
+          "href": "/collections/conformance/items/1/tproperties/speed",
+          "rel": "self"
+        }
+      ],
+      "name": "speed",
+      "type": "TReal"
+    },
+    {
+      "description": "Navigational status",
+      "links": [
+        {
+          "href": "/collections/conformance/items/1/tproperties/status",
+          "rel": "self"
+        }
+      ],
+      "name": "status",
+      "type": "TText"
+    }
+  ],
+  "timeStamp": "2026-08-29T17:08:43Z"
+}
+

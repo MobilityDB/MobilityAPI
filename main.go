@@ -17,6 +17,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"log"
 	"net/http"
@@ -71,6 +72,9 @@ func envInt(k string, def int) int {
 }
 
 func main() {
+	emit := flag.String("emit", "", "write one sample document per resource into this directory, then exit")
+	flag.Parse()
+
 	dsn := os.Getenv("MFAPI_DSN")
 	if dsn == "" {
 		dsn = "postgres:///mfapi_demo?host=/tmp&port=5432&user=esteban"
@@ -83,6 +87,17 @@ func main() {
 	defer db.Close()
 	if err := db.Ping(context.Background()); err != nil {
 		log.Fatal("db ping: ", err)
+	}
+
+	// The samples are written by the service, through the routing table it
+	// serves, so they are what the code answers rather than an illustration of
+	// it. See samples.go.
+	if *emit != "" {
+		if err := emitSamples(*emit); err != nil {
+			log.Fatal("emitting samples: ", err)
+		}
+		log.Printf("sample documents written to %s", *emit)
+		return
 	}
 
 	if broker := os.Getenv("MFAPI_MQTT_BROKER"); broker != "" {

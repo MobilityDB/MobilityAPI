@@ -285,6 +285,8 @@ func getCollection(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	crsURI := "http://www.opengis.net/def/crs/EPSG/0/" + itoa(srid)
+	// The one system the Core admits for a collection's spatial extent.
+	const crs84URI = "http://www.opengis.net/def/crs/OGC/1.3/CRS84"
 	col := map[string]any{
 		"id": cid, "title": title, "description": desc, "itemType": itemType,
 		"crs": []string{crsURI},
@@ -294,15 +296,27 @@ func getCollection(w http.ResponseWriter, r *http.Request) {
 			{"rel": "enclosure", "href": "/collections/" + cid + "/export", "type": "application/x-ndjson"},
 		},
 	}
-	// extent: spatial bbox and temporal interval from the collection's STBOX
-	var xmin, ymin, xmax, ymax *float64
-	var tmin, tmax *string
-	if err := db.QueryRow(r.Context(), "SELECT Xmin(e),Ymin(e),Xmax(e),Ymax(e),CAST(Tmin(e) AS text),CAST(Tmax(e) AS text) "+
-		"FROM (SELECT extent(trip) e FROM "+ident(tbl)+") s").Scan(&xmin, &ymin, &xmax, &ymax, &tmin, &tmax); err == nil &&
-		xmin != nil && tmin != nil {
-		col["extent"] = map[string]any{
-			"spatial":  map[string]any{"bbox": [][]float64{{*xmin, *ymin, *xmax, *ymax}}, "crs": crsURI},
-			"temporal": map[string]any{"interval": [][]string{{*tmin, *tmax}}, "trs": "http://www.opengis.net/def/uom/ISO-8601/0/Gregorian"},
+	// extent: spatial bbox and temporal interval from the collection's STBOX.
+	//
+	// The bbox is in CRS84 whatever the collection stores. The Core schema gives
+	// extent.spatial.crs an enum of CRS84 and CRS84h alone, so a reader is entitled to
+	// take these coordinates as WGS 84 longitude/latitude; a collection held in a
+	// projected system would otherwise publish metres under that reading. The box is
+	// transformed rather than the trajectories, which is one STBOX rather than a table
+	// scan, and transform is a no-op for a collection already in 4326.
+	//
+	// A collection whose SRID is unknown has no box statable in CRS84, and extent is
+	// not among the properties the schema requires, so it carries none.
+	if srid != 0 {
+		var xmin, ymin, xmax, ymax *float64
+		var tmin, tmax *string
+		if err := db.QueryRow(r.Context(), "SELECT Xmin(e),Ymin(e),Xmax(e),Ymax(e),CAST(Tmin(e) AS text),CAST(Tmax(e) AS text) "+
+			"FROM (SELECT transform(extent(trip), 4326) e FROM "+ident(tbl)+") s").Scan(&xmin, &ymin, &xmax, &ymax, &tmin, &tmax); err == nil &&
+			xmin != nil && tmin != nil {
+			col["extent"] = map[string]any{
+				"spatial":  map[string]any{"bbox": [][]float64{{*xmin, *ymin, *xmax, *ymax}}, "crs": crs84URI},
+				"temporal": map[string]any{"interval": [][]string{{*tmin, *tmax}}, "trs": "http://www.opengis.net/def/uom/ISO-8601/0/Gregorian"},
+			}
 		}
 	}
 	writeJSON(w, 200, col)

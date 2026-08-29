@@ -7,13 +7,15 @@
 // build stays cgo-free; the cluster engines (Flink/Kafka/Spark) plug into the
 // same StreamEngine seam.
 //
-// MEOS state is per-thread (PROJ context, SRS/ways caches, RNGs, errno, and the
-// session timezone are thread-local; the error handler is process-global). Per
-// that contract each query runs on its own OS-locked thread that calls
-// meos_initialize() before its first MEOS call and meos_finalize() on exit, so
-// queries run in parallel with no shared MEOS state. A stream record is an
-// instant, on which every lifted function is exact (discrete interpolation
-// applies it pointwise), so a continuous transform introduces no approximation.
+// The MEOS lifecycle has two levels and this engine drives both. meos_initialize
+// installs the process-global allocator and error handler, and meos_finalize
+// tears down process-global caches (PROJ and its SRS cache, the PRNGs), so the
+// pair runs once for the process. The caches a query's own calls read -- the
+// session timezone and the collation -- are thread-local, so each query
+// initialises those on its own OS-locked thread; PROJ, GEOS and the RNGs are
+// created lazily per thread inside MEOS. A stream record is an instant, on
+// which every lifted function is exact (discrete interpolation applies it
+// pointwise), so a continuous transform introduces no approximation.
 package main
 
 /*
@@ -35,11 +37,40 @@ import (
 	"unsafe"
 )
 
-// defaultStreamEngine returns the in-process engine. MEOS is initialised
-// per-query on the query's own worker thread, not here, per the per-thread
-// contract.
+// defaultStreamEngine returns the in-process engine. MEOS is initialised on the
+// query's own worker thread, not here, per the two-level lifecycle above.
 func defaultStreamEngine() (StreamEngine, error) {
 	return &meosEngine{}, nil
+}
+
+// meosProcess guards the process-global half of the lifecycle.
+var meosProcess sync.Once
+
+// initMEOSProcess installs the allocator and the process-global error handler
+// once for the tier. meos_initialize installs the default handler, which ends
+// the process on a MEOS error, so the no-exit handler is installed after it: a
+// malformed record must fail its query, not the tier.
+func initMEOSProcess() {
+	meosProcess.Do(func() {
+		C.meos_initialize()
+		C.meos_initialize_noexit_error_handler()
+	})
+}
+
+// initMEOSThread initialises the thread-local caches of the calling locked OS
+// thread, and finalizeMEOSThread releases them. Each runs exactly once per
+// thread: the query's goroutine never unlocks its thread, so the thread ends
+// with the query and serves no second one.
+func initMEOSThread() {
+	utc := C.CString("UTC")
+	defer C.free(unsafe.Pointer(utc))
+	C.meos_initialize_timezone(utc)
+	C.meos_initialize_collation()
+}
+
+func finalizeMEOSThread() {
+	C.meos_finalize_collation()
+	C.meos_finalize_timezone()
 }
 
 type meosEngine struct{}
@@ -59,14 +90,15 @@ func (e *meosEngine) Submit(ctx context.Context, spec QuerySpec, source <-chan I
 	return h, nil
 }
 
-// run pins the query to one OS thread, initialises MEOS on it, processes each
-// record, and finalises MEOS before releasing the thread.
+// run pins the query to one OS thread, initialises that thread's MEOS caches,
+// processes each record, and releases the caches when the query ends. The
+// thread is deliberately never unlocked: the goroutine's exit ends the OS
+// thread, so the caches are initialised and released exactly once on it.
 func (h *meosHandle) run(ctx context.Context, spec QuerySpec, source <-chan Instant) {
 	runtime.LockOSThread()
-	C.meos_initialize()
-	C.meos_initialize_noexit_error_handler()
-	defer runtime.UnlockOSThread() // runs last: keep the thread locked through meos_finalize
-	defer C.meos_finalize()
+	initMEOSProcess()
+	initMEOSThread()
+	defer finalizeMEOSThread()
 	defer close(h.results)
 	if spec.Agg != "" {
 		h.runAggregate(ctx, spec, source)

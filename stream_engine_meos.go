@@ -361,7 +361,7 @@ func windowAggregate(ptype, agg string, win []Instant) (any, int, error) {
 	switch ptype {
 	case "TText":
 		return textAggregate(agg, win)
-	case "TBool":
+	case "TBoolean":
 		return boolAggregate(agg, win)
 	default:
 		return numAggregate(agg, win)

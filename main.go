@@ -47,13 +47,55 @@ var (
 // The step function is "Step" on both sides. OGC API - Moving Features Part 1
 // names it so in each of the two places it constrains an interpolation —
 // `motionCurve` (Discrete/Step/Linear/Quadratic/Cubic, what a temporal geometry
-// takes) and `temporalPrimitiveValue` (Discrete/Step/Linear/Regression) — and
-// the word "Stepwise" appears nowhere in that standard. "Stepwise" belongs to
-// the older MF-JSON encoding extension, and is accepted on input for a client
-// that still writes it.
-var ogc2mdbInterp = map[string]string{
-	"Linear": "Linear", "Step": "Step", "Discrete": "Discrete", "Stepwise": "Step",
+// takes) and `temporalPrimitiveValue` (Discrete/Step/Linear/Regression).
+//
+// ⛔ THE ADMITTED SET IS THE STANDARD'S, AND IT IS CLOSED. "Stepwise" is the
+// older MF-JSON encoding extension's word for the step function and appears
+// nowhere in Part 1, so it is not a name a conformant client writes and the tier
+// does not answer to it.
+var ogc2mdbInterp = map[string]string{"Linear": "Linear", "Step": "Step", "Discrete": "Discrete"}
+
+// ogcOnlyInterp is what the standard names and MobilityDB does not carry: the
+// two curve fits a temporal geometry may ask for and the regression a temporal
+// property may. A request for one is a request the tier understands and cannot
+// serve, which is a different answer from one it does not understand.
+var ogcOnlyInterp = map[string]bool{"Quadratic": true, "Cubic": true, "Regression": true}
+
+// statusErr is an error that names the status a client is owed for it, so a
+// refusal keeps its meaning through the call that reports it.
+type statusErr struct {
+	code int
+	msg  string
 }
+
+func (e statusErr) Error() string { return e.msg }
+
+// errStatus answers the status an error names, or def when it names none.
+func errStatus(err error, def int) int {
+	var se statusErr
+	if errors.As(err, &se) {
+		return se.code
+	}
+	return def
+}
+
+// mdbInterp answers the MobilityDB token for an OGC interpolation. A name the
+// standard admits and this tier does not carry is 501; a name the standard does
+// not admit at all is 400. The two are different answers and a client can act on
+// the difference.
+func mdbInterp(s string) (string, error) {
+	if m, ok := ogc2mdbInterp[s]; ok {
+		return m, nil
+	}
+	if ogcOnlyInterp[s] {
+		return "", statusErr{501, fmt.Sprintf("interpolation %q is not carried by MobilityDB; "+
+			"this tier serves Discrete, Step and Linear", s)}
+	}
+	return "", statusErr{400, fmt.Sprintf("interpolation %q is not one the standard names; "+
+		"a temporal geometry takes Discrete, Step, Linear, Quadratic or Cubic, "+
+		"and a temporal property value takes Discrete, Step, Linear or Regression", s)}
+}
+
 var epsgName = regexp.MustCompile(`"name":\s*"EPSG:(\d+)"`)
 var epsgURN = regexp.MustCompile(`EPSG:+(\d+)`)
 
@@ -753,15 +795,12 @@ func orTrue(v any) bool {
 // a valueSequence array (a sequence set when it holds more than one segment).
 // The interpolation token is mapped from OGC to MobilityDB and defaults per type.
 func tPropMFJSON(mfType, defInterp string, body map[string]any) (string, error) {
-	mapInterp := func(v any) string {
+	mapInterp := func(v any) (string, error) {
 		s, _ := v.(string)
 		if s == "" {
-			return defInterp
+			return defInterp, nil
 		}
-		if m, ok := ogc2mdbInterp[s]; ok {
-			return m
-		}
-		return s
+		return mdbInterp(s)
 	}
 	if vs, ok := body["valueSequence"].([]any); ok && len(vs) > 0 {
 		if len(vs) == 1 {
@@ -773,7 +812,10 @@ func tPropMFJSON(mfType, defInterp string, body map[string]any) (string, error) 
 		for _, s := range vs {
 			m, _ := s.(map[string]any)
 			if interp == "" {
-				interp = mapInterp(m["interpolation"])
+				var err error
+				if interp, err = mapInterp(m["interpolation"]); err != nil {
+					return "", err
+				}
 			}
 			seqs = append(seqs, map[string]any{
 				"values": m["values"], "datetimes": m["datetimes"],
@@ -786,9 +828,13 @@ func tPropMFJSON(mfType, defInterp string, body map[string]any) (string, error) 
 	if body["datetimes"] == nil || body["values"] == nil {
 		return "", errors.New("temporal property requires datetimes and values (or a valueSequence)")
 	}
+	interp, err := mapInterp(body["interpolation"])
+	if err != nil {
+		return "", err
+	}
 	b, _ := json.Marshal(map[string]any{
 		"type": mfType, "datetimes": body["datetimes"], "values": body["values"],
-		"interpolation": mapInterp(body["interpolation"]),
+		"interpolation": interp,
 		"lower_inc":     orTrue(body["lower_inc"]), "upper_inc": orTrue(body["upper_inc"]),
 	})
 	return string(b), nil
@@ -1383,9 +1429,12 @@ func postItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if interp, ok := feat.TG["interpolation"].(string); ok {
-		if m, ok := ogc2mdbInterp[interp]; ok {
-			feat.TG["interpolation"] = m
+		m, err := mdbInterp(interp)
+		if err != nil {
+			httpErr(w, errStatus(err, 400), err.Error())
+			return
 		}
+		feat.TG["interpolation"] = m
 	}
 	tgBytes, _ := json.Marshal(feat.TG)
 	// default to the collection CRS; an explicit feature crs overrides it
@@ -1426,9 +1475,11 @@ func featureTG(r *http.Request) (tgText string, props map[string]any, err error)
 		return "", nil, errors.New("missing temporalGeometry")
 	}
 	if interp, ok := tg["interpolation"].(string); ok {
-		if m, ok := ogc2mdbInterp[interp]; ok {
-			tg["interpolation"] = m
+		m, err := mdbInterp(interp)
+		if err != nil {
+			return "", nil, err
 		}
+		tg["interpolation"] = m
 	}
 	if p, ok := raw["properties"].(map[string]any); ok {
 		props = p
@@ -1632,7 +1683,7 @@ func postTProperties(w http.ResponseWriter, r *http.Request) {
 		uom := propForm(p)
 		mfjson, perr := tPropMFJSON(tt.mf, tt.defInterp, p)
 		if perr != nil {
-			httpErr(w, 400, perr.Error())
+			httpErr(w, errStatus(perr, 400), perr.Error())
 			return
 		}
 		if _, e := tx.Exec(r.Context(),
@@ -1689,7 +1740,7 @@ func postTPropertyValues(w http.ResponseWriter, r *http.Request) {
 	}
 	mfjson, perr := tPropMFJSON(tt.mf, tt.defInterp, body)
 	if perr != nil {
-		httpErr(w, 400, perr.Error())
+		httpErr(w, errStatus(perr, 400), perr.Error())
 		return
 	}
 	ct, e := db.Exec(r.Context(),

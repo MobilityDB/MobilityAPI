@@ -47,9 +47,9 @@ func TestTPropMFJSON(t *testing.T) {
 		return m
 	}
 
-	// flat form, OGC "Stepwise" maps to MobilityDB "Step"
+	// flat form, the standard's own token for the step function
 	out, err := tPropMFJSON("MovingFloat", "Linear",
-		parse(`{"datetimes":["2026-01-01T00:00:00Z"],"values":[1],"interpolation":"Stepwise"}`))
+		parse(`{"datetimes":["2026-01-01T00:00:00Z"],"values":[1],"interpolation":"Step"}`))
 	if err != nil {
 		t.Fatal(err)
 	}

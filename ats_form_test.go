@@ -11,6 +11,7 @@
 package main
 
 import (
+	"encoding/json"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -65,4 +66,75 @@ func TestATSFormRefusedOnWrite(t *testing.T) {
 			t.Errorf("the refusal does not name the unit it refuses: %s", rec.Body.String())
 		}
 	})
+}
+
+// The interpolation a client may write is the set the standard names, and a name
+// outside it is refused rather than carried to MobilityDB to fail there.
+//
+// ⛔ THE TWO REFUSALS ARE DIFFERENT ANSWERS. A name the standard admits and this
+// tier does not carry is 501, because the request is understood and unserved; a
+// name the standard does not admit is 400, because it is not a request at all.
+// `Stepwise` is the second kind: it is the older MF-JSON encoding extension's
+// word for the step function and Part 1 does not name it.
+func TestATSInterpolationIsTheStandardsSet(t *testing.T) {
+	for _, c := range []struct {
+		in   string
+		mdb  string
+		code int
+	}{
+		{"Linear", "Linear", 0},
+		{"Step", "Step", 0},
+		{"Discrete", "Discrete", 0},
+		{"Quadratic", "", 501},
+		{"Cubic", "", 501},
+		{"Regression", "", 501},
+		{"Stepwise", "", 400},
+		{"stepwise", "", 400},
+		{"Bogus", "", 400},
+	} {
+		t.Run(c.in, func(t *testing.T) {
+			got, err := mdbInterp(c.in)
+			if c.code == 0 {
+				if err != nil {
+					t.Fatalf("%q is a name the standard admits: %v", c.in, err)
+				}
+				if got != c.mdb {
+					t.Errorf("%q resolves to %q, want %q", c.in, got, c.mdb)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("%q resolves to %q, want a refusal", c.in, got)
+			}
+			if s := errStatus(err, 400); s != c.code {
+				t.Errorf("%q is refused with %d, want %d (%v)", c.in, s, c.code, err)
+			}
+		})
+	}
+}
+
+// The refusal reaches a client through the body it writes, not only through the
+// resolver, so a temporal property naming an interpolation the standard does not
+// carry answers 501 rather than a MobilityDB parse error.
+func TestATSInterpolationRefusalReachesTheClient(t *testing.T) {
+	for _, c := range []struct {
+		in   string
+		code int
+	}{{"Regression", 501}, {"Stepwise", 400}} {
+		t.Run(c.in, func(t *testing.T) {
+			body := `{"datetimes":["2026-01-01T00:00:00Z","2026-01-01T00:10:00Z"],` +
+				`"values":[1,2],"interpolation":"` + c.in + `"}`
+			var m map[string]any
+			if err := json.Unmarshal([]byte(body), &m); err != nil {
+				t.Fatal(err)
+			}
+			_, err := tPropMFJSON("MovingFloat", "Linear", m)
+			if err == nil {
+				t.Fatalf("%q is carried into the MF-JSON rather than refused", c.in)
+			}
+			if s := errStatus(err, 400); s != c.code {
+				t.Errorf("%q reaches the client as %d, want %d (%v)", c.in, s, c.code, err)
+			}
+		})
+	}
 }

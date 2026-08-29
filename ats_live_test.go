@@ -15,6 +15,7 @@
 package main
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -189,5 +190,72 @@ func TestATSLiveFixtureIsRestored(t *testing.T) {
 	}
 	if rec := atsDo(t, mux, "GET", "/collections/conformance/items/2", ""); rec.Code != 200 {
 		t.Errorf("the second feature reads %d, want 200", rec.Code)
+	}
+}
+
+// /conf/movingfeatures/param-subtemporalvalue-response: the subTemporalValue
+// parameter is processed, against the fixture's own property.
+//
+// ⛔ THE ASSERTION IS THAT THE ANSWER MOVES. A parameter that is read and changes
+// nothing a client receives is indistinguishable from one that is ignored, which
+// is the state this test exists to keep the tier out of: the clipped answer holds
+// strictly fewer instants than the unclipped one, and none outside the interval.
+func TestATSLiveSubTemporalValue(t *testing.T) {
+	mux, done := atsLiveMux(t)
+	defer done()
+	const path = "/collections/conformance/items/1/tproperties/speed"
+
+	instants := func(rec *httptest.ResponseRecorder) []string {
+		t.Helper()
+		var doc struct {
+			ValueSequence []struct {
+				Datetimes []string `json:"datetimes"`
+			} `json:"valueSequence"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &doc); err != nil {
+			t.Fatalf("the TemporalProperty document is not JSON: %v (%s)", err, rec.Body.String())
+		}
+		var out []string
+		for _, s := range doc.ValueSequence {
+			out = append(out, s.Datetimes...)
+		}
+		return out
+	}
+
+	whole := atsDo(t, mux, "GET", path, "")
+	if whole.Code != 200 {
+		t.Fatalf("GET the property = %d, want 200 (%s)", whole.Code, whole.Body.String())
+	}
+	all := instants(whole)
+	if len(all) < 3 {
+		t.Fatalf("the fixture property holds %d instants, too few for a clip to be visible", len(all))
+	}
+
+	// The fixture's speed runs 08:00 to 08:45; this interval ends before the last
+	// two instants, so a processed parameter cannot return all of them.
+	sub := atsDo(t, mux, "GET",
+		path+"?subTemporalValue=true&datetime=2026-01-01T08:00:00Z/2026-01-01T08:20:00Z", "")
+	if sub.Code != 200 {
+		t.Fatalf("GET with subTemporalValue = %d, want 200 (%s)", sub.Code, sub.Body.String())
+	}
+	clipped := instants(sub)
+	if len(clipped) == 0 {
+		t.Fatal("subTemporalValue returns no instants at all")
+	}
+	if len(clipped) >= len(all) {
+		t.Errorf("subTemporalValue returns %d instants against %d unclipped, so the parameter "+
+			"changes nothing a client receives", len(clipped), len(all))
+	}
+	for _, d := range clipped {
+		if d > "2026-01-01T08:20:01" {
+			t.Errorf("subTemporalValue returns %s, which is outside the interval it names", d)
+		}
+	}
+
+	// Part 1 states the datetime IS a bounded interval under the flag, so a request
+	// without one is not a request this route can answer.
+	if rec := atsDo(t, mux, "GET", path+"?subTemporalValue=true", ""); rec.Code != 400 {
+		t.Errorf("subTemporalValue without a bounded interval = %d, want 400 (%s)",
+			rec.Code, rec.Body.String())
 	}
 }

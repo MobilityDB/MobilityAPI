@@ -856,7 +856,43 @@ func ensureTPropTable(ctx context.Context, q interface {
 
 // clip wraps a temporal expression with atTime for the OGC leaf (instant set)
 // or datetime (interval) selector, binding the selector value as a parameter.
+// clip restricts an expression to what the OGC time parameters select.
 func clip(expr string, q url.Values, args []any) (string, []any, error) {
+	return clipSub(expr, "", q, args)
+}
+
+// clipSub is clip under a sub-resource flag. Part 1 states the flag's effect for
+// both of the pair it defines — `subTrajectory` for a temporal geometry and
+// `subTemporalValue` for a temporal property — in the same words: "Only a
+// subsequence … clipped to the datetime interval is returned. The datetime
+// parameter is then a bounded interval and the leaf parameter is not used."
+//
+// So the flag is not a synonym for passing `datetime`. It makes the bounded
+// interval REQUIRED, which is what lets a client rely on receiving a subsequence
+// rather than whatever the parameters happened to select, and it takes `leaf` out
+// of the selection. subParam empty means the caller's resource defines no such
+// flag, and the parameter is then not one this route answers to.
+//
+// ⛔ OGC WRITES THE NAME IN LOWER CASE IN ITS OWN EXAMPLES, so both spellings are
+// read, as the temporal-geometry side already does.
+func clipSub(expr, subParam string, q url.Values, args []any) (string, []any, error) {
+	if subParam != "" {
+		sub := first(q, strings.ToLower(subParam))
+		if sub == "" {
+			sub = first(q, subParam)
+		}
+		if sub == "true" {
+			dt := q.Get("datetime")
+			s, e, ok := splitInterval(dt)
+			if !ok || strings.TrimSpace(s) == "" || strings.TrimSpace(e) == "" ||
+				strings.Contains(dt, "..") {
+				return "", nil, errors.New(subParam +
+					" requires the datetime parameter to be a bounded interval")
+			}
+			args = append(args, "["+strings.TrimSpace(s)+", "+strings.TrimSpace(e)+"]")
+			return "atTime(" + expr + ", CAST($" + itoa(len(args)) + " AS tstzspan))", args, nil
+		}
+	}
 	if lf := q.Get("leaf"); lf != "" {
 		set, err := tstzSet(lf)
 		if err != nil {
@@ -1012,7 +1048,7 @@ func getTProperty(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, 500, "stored property has an unknown type: "+ptype)
 		return
 	}
-	expr, args, cerr := clip(tt.col, r.URL.Query(), []any{cid, fid, name})
+	expr, args, cerr := clipSub(tt.col, "subTemporalValue", r.URL.Query(), []any{cid, fid, name})
 	if cerr != nil {
 		httpErr(w, 400, cerr.Error())
 		return
@@ -1208,8 +1244,12 @@ func apiDoc(w http.ResponseWriter, r *http.Request) {
 			},
 			"/collections/{cid}/items/{fid}/tgsequence/{tgid}/{qtype}": get("Derived query on a member geometry: distance | velocity (acceleration → 501, not derivable for this motion model)"),
 			"/collections/{cid}/items/{fid}/tproperties": map[string]any{
+				// The document this route answers carries each property's name, type,
+				// unit and links, and no valueSequence — which `temporalProperty`
+				// makes optional. A flag that clips values has nothing to clip here,
+				// so this route does not advertise one.
 				"get": withParams(op("Stored temporal properties of a feature"),
-					limitParam, datetimeParam, subTemporalValueParam),
+					limitParam, datetimeParam),
 				"post": op("Add one or more temporal properties (TReal | TInteger | TText | TBoolean) to a feature"),
 			},
 			"/collections/{cid}/items/{fid}/tproperties/{pname}": map[string]any{

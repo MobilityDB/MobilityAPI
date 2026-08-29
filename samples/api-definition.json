@@ -386,18 +386,6 @@
               "type": "string"
             },
             "style": "form"
-          },
-          {
-            "description": "Only a subsequence of the temporal property clipped to the datetime interval is returned. The datetime parameter is then a bounded interval and the leaf parameter is not used.",
-            "explode": false,
-            "in": "query",
-            "name": "subTemporalValue",
-            "required": false,
-            "schema": {
-              "default": false,
-              "type": "boolean"
-            },
-            "style": "form"
           }
         ],
         "responses": {

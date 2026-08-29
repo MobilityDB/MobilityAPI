@@ -13,6 +13,7 @@ package main
 import (
 	"encoding/json"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 )
@@ -136,5 +137,69 @@ func TestATSInterpolationRefusalReachesTheClient(t *testing.T) {
 				t.Errorf("%q reaches the client as %d, want %d (%v)", c.in, s, c.code, err)
 			}
 		})
+	}
+}
+
+// /conf/movingfeatures/param-subtemporalvalue-response — the subTemporalValue
+// parameter is processed rather than advertised.
+//
+// ⛔ THE FLAG IS NOT A SYNONYM FOR PASSING `datetime`. Part 1 states that under it
+// the datetime parameter IS a bounded interval and `leaf` is not used, so a request
+// carrying the flag without a bounded interval is refused, and one carrying `leaf`
+// beside it is answered on the interval. A parameter that changes nothing a client
+// can observe is advertised, not implemented.
+func TestATSSubTemporalValueIsProcessed(t *testing.T) {
+	const col = "v"
+	for _, c := range []struct {
+		what     string
+		query    string
+		wantErr  bool
+		wantExpr string
+	}{
+		{"absent, so the other parameters select as before", "", false, "v"},
+		{"absent with an interval, which clips on its own", "datetime=A/B", false, "atTime(v, CAST($1 AS tstzspan))"},
+		{"set, with a bounded interval", "subTemporalValue=true&datetime=A/B", false, "atTime(v, CAST($1 AS tstzspan))"},
+		{"set, lower case as OGC writes it", "subtemporalvalue=true&datetime=A/B", false, "atTime(v, CAST($1 AS tstzspan))"},
+		{"set beside leaf, which it takes out of the selection", "subTemporalValue=true&datetime=A/B&leaf=T", false, "atTime(v, CAST($1 AS tstzspan))"},
+		{"set with no datetime at all", "subTemporalValue=true", true, ""},
+		{"set with an instant rather than an interval", "subTemporalValue=true&datetime=A", true, ""},
+		{"set with an open-ended interval", "subTemporalValue=true&datetime=A/..", true, ""},
+	} {
+		t.Run(c.what, func(t *testing.T) {
+			q, err := url.ParseQuery(c.query)
+			if err != nil {
+				t.Fatal(err)
+			}
+			expr, _, cerr := clipSub(col, "subTemporalValue", q, nil)
+			if c.wantErr {
+				if cerr == nil {
+					t.Fatalf("%s answers %q, want a refusal", c.what, expr)
+				}
+				return
+			}
+			if cerr != nil {
+				t.Fatalf("%s is refused: %v", c.what, cerr)
+			}
+			if expr != c.wantExpr {
+				t.Errorf("%s selects %q, want %q", c.what, expr, c.wantExpr)
+			}
+		})
+	}
+}
+
+// The temporal-geometry route answers to no such flag: Part 1 defines
+// subTemporalValue for a temporal property, and a route that honoured a parameter
+// its resource does not define would be the same defect in the other direction.
+func TestATSSubTemporalValueIsNotAGeometryFlag(t *testing.T) {
+	q, err := url.ParseQuery("subTemporalValue=true")
+	if err != nil {
+		t.Fatal(err)
+	}
+	expr, _, cerr := clip("trip", q, nil)
+	if cerr != nil {
+		t.Fatalf("the temporal geometry route refuses a parameter it does not define: %v", cerr)
+	}
+	if expr != "trip" {
+		t.Errorf("the temporal geometry route selects %q for a property flag, want the value unclipped", expr)
 	}
 }

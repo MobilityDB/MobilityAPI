@@ -160,7 +160,7 @@ func TestATSLiveTemporalPropertyLifecycle(t *testing.T) {
 	defer atsDo(t, mux, "DELETE", base+"/"+name, "")
 
 	rec := atsDo(t, mux, "POST", base,
-		`[{"name":"`+name+`","type":"TReal","form":"m","description":"added by the conformance suite",`+
+		`[{"name":"`+name+`","type":"TReal","form":"http://www.opengis.net/def/uom/UCUM/0/m","description":"added by the conformance suite",`+
 			`"datetimes":["2026-01-01T08:00:00+00","2026-01-01T08:10:00+00"],"values":[1.0,2.0],"interpolation":"Linear"}]`)
 	if !oneOf(rec.Code, 200, 201, 202) {
 		t.Fatalf("POST %s = %d, want 201 or 202 (%s)", base, rec.Code, rec.Body.String())

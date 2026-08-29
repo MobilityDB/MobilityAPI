@@ -654,9 +654,41 @@ func getItem(w http.ResponseWriter, r *http.Request) {
 // function's true interpolation — they do not coerce it.
 type propSpec struct{ expr, uom, desc string }
 
+// The unit is the OGC register URI for the UCUM code, which is the form
+// /components/schemas/temporalProperty admits without ambiguity — its other branch
+// takes a string of exactly three characters, which the metre's own symbol is not.
+// It is also the shape the tier already names a temporal reference system by.
 var tProps = map[string]propSpec{
-	"velocity": {"speed(trip)", "m/s", "Speed over ground (velocity magnitude), a piecewise-constant function of the trajectory."},
-	"distance": {"cumulativeLength(trip)", "m", "Cumulative distance travelled along the trajectory."},
+	"velocity": {"speed(trip)", uomURI + "m_s-1", "Speed over ground (velocity magnitude), a piecewise-constant function of the trajectory."},
+	"distance": {"cumulativeLength(trip)", uomURI + "m", "Cumulative distance travelled along the trajectory."},
+}
+
+// uomURI is the OGC unit-of-measure register, keyed by UCUM code.
+const uomURI = "http://www.opengis.net/def/uom/UCUM/0/"
+
+// conformantForm reports whether a unit of measure is one a temporalProperty document
+// can carry: absent, an absolute URI, or a string of exactly three characters, which is
+// the whole of what /components/schemas/temporalProperty admits for `form`.
+//
+// ⛔ IT IS CHECKED ON THE WAY IN, not only on the way out. A unit stored here that no
+// conformant document can express would be published unconformantly or silently dropped,
+// and either is worse than refusing it at the point where a caller can still fix it. The
+// register at uomURI names the units whose symbols the three-character branch excludes —
+// the metre among them.
+// propForm reads a temporal property body's unit of measure under either spelling.
+func propForm(p map[string]any) string {
+	if u := strOf(p["form"]); u != "" {
+		return u
+	}
+	return strOf(p["unitOfMeasure"])
+}
+
+func conformantForm(uom string) bool {
+	if uom == "" || len(uom) == 3 {
+		return true
+	}
+	u, err := url.Parse(uom)
+	return err == nil && u.IsAbs()
 }
 
 // tType describes how a scalar temporal property is carried: mf is the
@@ -1004,8 +1036,12 @@ func listTProperties(w http.ResponseWriter, r *http.Request) {
 			if err := rows.Scan(&name, &ptype, &uom, &desc); err != nil {
 				break
 			}
-			list = append(list, map[string]any{"name": name, "type": ptype, "form": uom, "description": desc,
-				"links": []map[string]string{{"rel": "self", "href": base + "/" + name}}})
+			entry := map[string]any{"name": name, "type": ptype, "description": desc,
+				"links": []map[string]string{{"rel": "self", "href": base + "/" + name}}}
+			if uom != "" {
+				entry["form"] = uom
+			}
+			list = append(list, entry)
 		}
 	}
 	writeJSON(w, 200, map[string]any{
@@ -1530,6 +1566,15 @@ func postTProperties(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, 400, "no temporal property supplied")
 		return
 	}
+	// The body is checked before a transaction opens, so a request that cannot succeed
+	// costs none.
+	for _, p := range list {
+		if uom := propForm(p); !conformantForm(uom) {
+			httpErr(w, 400, "a unit of measure is an absolute URI or a string of exactly three "+
+				"characters, which is what the temporalProperty schema admits: "+uom)
+			return
+		}
+	}
 	tx, err := db.Begin(r.Context())
 	if err != nil {
 		httpErr(w, 500, err.Error())
@@ -1558,10 +1603,7 @@ func postTProperties(w http.ResponseWriter, r *http.Request) {
 			httpErr(w, 400, "unsupported temporal property type: "+typeTok)
 			return
 		}
-		uom := strOf(p["form"])
-		if uom == "" {
-			uom = strOf(p["unitOfMeasure"])
-		}
+		uom := propForm(p)
 		mfjson, perr := tPropMFJSON(tt.mf, tt.defInterp, p)
 		if perr != nil {
 			httpErr(w, 400, perr.Error())

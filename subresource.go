@@ -9,10 +9,14 @@ import (
 	"strconv"
 )
 
+// ⛔ `form` IS OMITTED WHEN THERE IS NO UNIT, never written empty.
+// /components/schemas/temporalProperty admits a form that is an absolute URI or a
+// string of exactly three characters, and the empty string is neither; the member is
+// optional, so a property carrying no unit carries no form.
 type tPropDoc struct {
 	Name          string                       `json:"name"`
 	Type          string                       `json:"type"`
-	Form          string                       `json:"form"`
+	Form          string                       `json:"form,omitempty"`
 	Description   string                       `json:"description"`
 	ValueSequence []map[string]json.RawMessage `json:"valueSequence"`
 	Links         []ogcLink                    `json:"links"`

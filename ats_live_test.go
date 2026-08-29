@@ -19,6 +19,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -258,4 +259,167 @@ func TestATSLiveSubTemporalValue(t *testing.T) {
 		t.Errorf("subTemporalValue without a bounded interval = %d, want 400 (%s)",
 			rec.Code, rec.Body.String())
 	}
+}
+
+// /conf/movingfeatures/features-post-success, mf-delete-success,
+// tgsequence-post-success and tpgeometry-delete-success: the moving-feature
+// lifecycle, on a feature this test creates so the fixture is untouched.
+func TestATSLiveFeatureLifecycle(t *testing.T) {
+	mux, done := atsLiveMux(t)
+	defer done()
+	const items = "/collections/conformance/items"
+
+	// A trajectory disjoint in time from the fixture's, so a merge into it cannot
+	// collide and the 409 the tier answers on overlap is not what is measured here.
+	const tg = `{"type":"MovingPoint","coordinates":[[575000,6220000],[576000,6220500]],` +
+		`"datetimes":["2026-03-01T08:00:00Z","2026-03-01T08:10:00Z"],"interpolation":"Linear"}`
+	rec := atsDo(t, mux, "POST", items,
+		`{"properties":{"mmsi":999999,"name":"ats_feature"},"temporalGeometry":`+tg+`}`)
+	if !oneOf(rec.Code, 201, 202) {
+		t.Fatalf("POST %s = %d, want 201 or 202 (%s)", items, rec.Code, rec.Body.String())
+	}
+	fid := atsCreatedID(t, rec)
+	defer atsDo(t, mux, "DELETE", items+"/"+fid, "")
+
+	if rec := atsDo(t, mux, "GET", items+"/"+fid, ""); rec.Code != 200 {
+		t.Fatalf("the created feature reads %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+
+	// A second sequence, later again, so the feature carries two and the delete
+	// below has one to remove while leaving the feature readable.
+	const tg2 = `{"type":"MovingPoint","coordinates":[[577000,6221000],[578000,6221500]],` +
+		`"datetimes":["2026-03-01T09:00:00Z","2026-03-01T09:10:00Z"],"interpolation":"Linear"}`
+	rec = atsDo(t, mux, "POST", items+"/"+fid+"/tgsequence", tg2)
+	if !oneOf(rec.Code, 201, 202) {
+		t.Fatalf("POST tgsequence = %d, want 201 or 202 (%s)", rec.Code, rec.Body.String())
+	}
+
+	rec = atsDo(t, mux, "DELETE", items+"/"+fid+"/tgsequence/2", "")
+	if !oneOf(rec.Code, 200, 202, 204) {
+		t.Errorf("DELETE tgsequence/2 = %d, want 200, 202 or 204 (%s)", rec.Code, rec.Body.String())
+	}
+
+	rec = atsDo(t, mux, "DELETE", items+"/"+fid, "")
+	if !oneOf(rec.Code, 200, 202, 204) {
+		t.Errorf("DELETE %s/%s = %d, want 200, 202 or 204 (%s)", items, fid, rec.Code, rec.Body.String())
+	}
+	if rec := atsDo(t, mux, "GET", items+"/"+fid, ""); rec.Code != 404 {
+		t.Errorf("the deleted feature answers %d, want 404", rec.Code)
+	}
+}
+
+// atsCreatedID reads the identifier a creation answers with, so a lifecycle
+// removes what it made rather than guessing at an id the fixture may reuse.
+func atsCreatedID(t *testing.T, rec *httptest.ResponseRecorder) string {
+	t.Helper()
+	var doc map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &doc); err != nil {
+		t.Fatalf("the creation response is not JSON: %v (%s)", err, rec.Body.String())
+	}
+	for _, k := range []string{"id", "fid", "featureId"} {
+		switch v := doc[k].(type) {
+		case string:
+			return v
+		case float64:
+			return strconv.FormatFloat(v, 'f', -1, 64)
+		}
+	}
+	t.Fatalf("the creation response names no identifier: %s", rec.Body.String())
+	return ""
+}
+
+// /conf/movingfeatures/tproperty-post-success and tpvalue-delete-success: values
+// appended to a property this test creates, and one of them removed.
+func TestATSLiveTemporalPropertyValues(t *testing.T) {
+	mux, done := atsLiveMux(t)
+	defer done()
+	const base = "/collections/conformance/items/1/tproperties"
+	const name = "ats_values"
+	defer atsDo(t, mux, "DELETE", base+"/"+name, "")
+
+	rec := atsDo(t, mux, "POST", base,
+		`[{"name":"`+name+`","type":"TReal","form":"http://www.opengis.net/def/uom/UCUM/0/m",`+
+			`"description":"added by the conformance suite",`+
+			`"datetimes":["2026-01-01T08:00:00+00","2026-01-01T08:10:00+00"],`+
+			`"values":[1.0,2.0],"interpolation":"Linear"}]`)
+	if !oneOf(rec.Code, 200, 201, 202) {
+		t.Fatalf("POST %s = %d, want 201 or 202 (%s)", base, rec.Code, rec.Body.String())
+	}
+
+	// Appending to the property itself, which is the singular route the plural one
+	// above does not exercise. The window is later so the append is disjoint.
+	rec = atsDo(t, mux, "POST", base+"/"+name,
+		`{"datetimes":["2026-01-01T09:00:00+00","2026-01-01T09:10:00+00"],`+
+			`"values":[3.0,4.0],"interpolation":"Linear"}`)
+	if !oneOf(rec.Code, 200, 201, 202) {
+		t.Fatalf("POST %s/%s = %d, want 201 or 202 (%s)", base, name, rec.Code, rec.Body.String())
+	}
+
+	rec = atsDo(t, mux, "DELETE", base+"/"+name+"/1", "")
+	if !oneOf(rec.Code, 200, 202, 204) {
+		t.Errorf("DELETE %s/%s/1 = %d, want 200, 202 or 204 (%s)", base, name, rec.Code, rec.Body.String())
+	}
+}
+
+// /conf/movingfeatures/param-leaf-response and param-subtrajectory-response.
+//
+// ⛔ EACH ASSERTION IS THAT THE ANSWER MOVES, for the reason the subTemporalValue
+// test states: a parameter read and not acted on is indistinguishable from one
+// ignored, and only a difference a client can see separates them.
+func TestATSLiveQueryParameters(t *testing.T) {
+	mux, done := atsLiveMux(t)
+	defer done()
+
+	// leaf selects the instants it names, so the answer carries those and no more.
+	const prop = "/collections/conformance/items/1/tproperties/speed"
+	whole := atsDo(t, mux, "GET", prop, "")
+	if whole.Code != 200 {
+		t.Fatalf("GET the property = %d, want 200 (%s)", whole.Code, whole.Body.String())
+	}
+	leaf := atsDo(t, mux, "GET", prop+"?leaf=2026-01-01T08:00:00Z,2026-01-01T08:10:00Z", "")
+	if leaf.Code != 200 {
+		t.Fatalf("GET with leaf = %d, want 200 (%s)", leaf.Code, leaf.Body.String())
+	}
+	if n, m := atsInstantCount(t, leaf), atsInstantCount(t, whole); n == 0 || n >= m {
+		t.Errorf("leaf returns %d instants against %d unclipped, so the parameter changes "+
+			"nothing a client receives", n, m)
+	}
+
+	// subTrajectory clips the items' temporal geometry to the interval.
+	const items = "/collections/conformance/items"
+	all := atsDo(t, mux, "GET", items, "")
+	if all.Code != 200 {
+		t.Fatalf("GET items = %d, want 200 (%s)", all.Code, all.Body.String())
+	}
+	sub := atsDo(t, mux, "GET",
+		items+"?subTrajectory=true&datetime=2026-01-01T08:00:00Z/2026-01-01T08:20:00Z", "")
+	if sub.Code != 200 {
+		t.Fatalf("GET items with subTrajectory = %d, want 200 (%s)", sub.Code, sub.Body.String())
+	}
+	if len(sub.Body.Bytes()) >= len(all.Body.Bytes()) {
+		t.Errorf("subTrajectory returns %d bytes against %d unclipped, so the parameter changes "+
+			"nothing a client receives", len(sub.Body.Bytes()), len(all.Body.Bytes()))
+	}
+	if rec := atsDo(t, mux, "GET", items+"?subTrajectory=true", ""); rec.Code != 400 {
+		t.Errorf("subTrajectory without a bounded interval = %d, want 400 (%s)",
+			rec.Code, rec.Body.String())
+	}
+}
+
+// atsInstantCount counts the instants a TemporalProperty document carries.
+func atsInstantCount(t *testing.T, rec *httptest.ResponseRecorder) int {
+	t.Helper()
+	var doc struct {
+		ValueSequence []struct {
+			Datetimes []string `json:"datetimes"`
+		} `json:"valueSequence"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &doc); err != nil {
+		t.Fatalf("the TemporalProperty document is not JSON: %v (%s)", err, rec.Body.String())
+	}
+	var n int
+	for _, s := range doc.ValueSequence {
+		n += len(s.Datetimes)
+	}
+	return n
 }

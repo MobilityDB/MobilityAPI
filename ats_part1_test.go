@@ -12,6 +12,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -31,6 +32,40 @@ const (
 	atsResponse                // the returned document is asserted against a scripted backend
 	atsLive                    // needs a populated backend: stateful round-trips
 )
+
+// atsDischargedBy names the live test that discharges each abstract test needing a
+// backend.
+//
+// ⛔ IT IS BUILT FROM WHAT A TEST CALLS, NEVER FROM WHAT ITS COMMENT CLAIMS. The
+// temporal-property lifecycle posts to the PLURAL route, so it discharges
+// tproperties-post-success and not the singular tproperty-post-success its comment
+// once named — and a report keyed on comments counted that abstract test twice over,
+// once as covered and once as awaiting an assertion.
+//
+// ⛔ AN UNCONDITIONAL "awaits its live assertion" UNDERSTATES CONFORMANCE. A row a
+// named group already asserts reads as outstanding, so the tier's own coverage report
+// is the thing that makes the claim look worse than the suite is. The entry is what
+// tells the two apart, and TestATSEveryLiveRowIsDischarged keeps every row carrying
+// one that names a test which exists.
+var atsDischargedBy = map[string]string{
+	"/conf/mf-collection/collections-post-success":         "TestATSLiveCollectionLifecycle",
+	"/conf/mf-collection/collections-put-success":          "TestATSLiveCollectionLifecycle",
+	"/conf/mf-collection/collections-delete-success":       "TestATSLiveCollectionLifecycle",
+	"/conf/movingfeatures/features-get-success":            "TestATSLiveFeatures",
+	"/conf/movingfeatures/features-post-success":           "TestATSLiveFeatureLifecycle",
+	"/conf/movingfeatures/mf-get-success":                  "TestATSLiveFeatures",
+	"/conf/movingfeatures/mf-delete-success":               "TestATSLiveFeatureLifecycle",
+	"/conf/movingfeatures/tgsequence-post-success":         "TestATSLiveFeatureLifecycle",
+	"/conf/movingfeatures/tpgeometry-delete-success":       "TestATSLiveFeatureLifecycle",
+	"/conf/movingfeatures/tproperties-post-success":        "TestATSLiveTemporalPropertyLifecycle",
+	"/conf/movingfeatures/tproperty-get-success":           "TestATSLiveTemporalProperties",
+	"/conf/movingfeatures/tproperty-post-success":          "TestATSLiveTemporalPropertyValues",
+	"/conf/movingfeatures/tproperty-delete-success":        "TestATSLiveTemporalPropertyLifecycle",
+	"/conf/movingfeatures/tpvalue-delete-success":          "TestATSLiveTemporalPropertyValues",
+	"/conf/movingfeatures/param-leaf-response":             "TestATSLiveQueryParameters",
+	"/conf/movingfeatures/param-subtrajectory-response":    "TestATSLiveQueryParameters",
+	"/conf/movingfeatures/param-subtemporalvalue-response": "TestATSLiveSubTemporalValue",
+}
 
 // atsTest is one abstract test of Annex A.
 type atsTest struct {
@@ -261,7 +296,12 @@ func TestATSLiveOperations(t *testing.T) {
 			if dsn == "" {
 				t.Skipf("needs a populated backend: set MFAPI_DSN to run %s (%s)", a.id, a.purpose)
 			}
-			t.Skipf("%s awaits its live assertion (%s)", a.id, a.purpose)
+			by := atsDischargedBy[a.id]
+			if by == "" {
+				t.Errorf("%s names no live test that discharges it (%s)", a.id, a.purpose)
+				return
+			}
+			t.Logf("%s is discharged by %s (%s)", a.id, by, a.purpose)
 		})
 	}
 }
@@ -294,4 +334,38 @@ func TestATSCoverageReport(t *testing.T) {
 	}
 	t.Log(fmt.Sprintf("%d abstract tests: %d served, %d not served, %d need a backend",
 		len(rows), served, missing, live))
+}
+
+// Every abstract test needing a backend names a live test that discharges it, and
+// every name is a test that exists.
+//
+// ⛔ A MAP ENTRY NAMING A TEST THAT DOES NOT EXIST IS WORSE THAN NO ENTRY: it reports
+// an abstract test as discharged by nothing at all, which is the failure the entry
+// was added to end. The source is read for the declaration rather than trusted.
+func TestATSEveryLiveRowIsDischarged(t *testing.T) {
+	src, err := os.ReadFile("ats_live_test.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var live, undischarged int
+	for _, a := range atsPart1 {
+		if a.kind != atsLive {
+			continue
+		}
+		live++
+		by := atsDischargedBy[a.id]
+		if by == "" {
+			undischarged++
+			t.Errorf("%s needs a backend and names no live test that discharges it (%s)",
+				a.id, a.purpose)
+			continue
+		}
+		if !bytes.Contains(src, []byte("func "+by+"(")) {
+			t.Errorf("%s names %s, which ats_live_test.go does not declare", a.id, by)
+		}
+	}
+	if live == 0 {
+		t.Fatal("the registry carries no live row, so this test would assert nothing")
+	}
+	t.Logf("%d abstract tests need a backend; %d are undischarged", live, undischarged)
 }

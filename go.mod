@@ -11,6 +11,7 @@ require (
 	github.com/marcboeker/go-duckdb/v2 v2.4.3
 	github.com/mochi-mqtt/server/v2 v2.7.9
 	github.com/parquet-go/parquet-go v0.30.1
+	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 )
 
 require (

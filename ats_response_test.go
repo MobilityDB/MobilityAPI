@@ -107,6 +107,12 @@ func TestATSCollectionGetSuccess(t *testing.T) {
 			Links    []struct {
 				Rel string `json:"rel"`
 			} `json:"links"`
+			Extent struct {
+				Spatial struct {
+					BBox [][]float64 `json:"bbox"`
+					CRS  string      `json:"crs"`
+				} `json:"spatial"`
+			} `json:"extent"`
 		}
 		if err := json.Unmarshal(rec.Body.Bytes(), &col); err != nil {
 			t.Fatal(err)
@@ -120,8 +126,24 @@ func TestATSCollectionGetSuccess(t *testing.T) {
 		if len(col.CRS) == 0 || len(col.Links) == 0 {
 			t.Errorf("crs=%v links=%d, both are required", col.CRS, len(col.Links))
 		}
+		// The Core gives extent.spatial.crs an enum of these two alone, so a bbox
+		// carrying the collection's own projected system is unreadable to a client
+		// entitled to take it as longitude/latitude.
+		if crs := col.Extent.Spatial.CRS; crs != crs84 && crs != crs84h {
+			t.Errorf("extent.spatial.crs = %q, want %s (the Core admits only it and %s)",
+				crs, crs84, crs84h)
+		}
+		if len(col.Extent.Spatial.BBox) == 0 {
+			t.Error("the collection states no spatial extent")
+		}
 	})
 }
+
+// The two systems /components/schemas/extent gives spatial.crs as its whole enum.
+const (
+	crs84  = "http://www.opengis.net/def/crs/OGC/1.3/CRS84"
+	crs84h = "http://www.opengis.net/def/crs/OGC/0/CRS84h"
+)
 
 // /conf/movingfeatures/tproperties-get-success — every TemporalProperty carries
 // a name and a type, and the type is one of the values the standard predefines.

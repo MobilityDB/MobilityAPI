@@ -90,7 +90,7 @@ func buildFeature(id int64, props json.RawMessage, srid int, bbox []float64, tmi
 		CRS:              crsURN(srid),
 		TRS:              trsGregorian,
 		Bbox:             bbox,
-		Time:             []string{tmin, tmax},
+		Time:             []string{rfc3339(tmin), rfc3339(tmax)},
 		TemporalGeometry: json.RawMessage(ogcify(string(tgeom))),
 		Links:            []ogcLink{{Rel: "self", Href: "/collections/" + cid + "/items/" + strconv.FormatInt(id, 10)}},
 	}

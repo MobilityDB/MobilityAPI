@@ -315,7 +315,7 @@ func getCollection(w http.ResponseWriter, r *http.Request) {
 			xmin != nil && tmin != nil {
 			col["extent"] = map[string]any{
 				"spatial":  map[string]any{"bbox": [][]float64{{*xmin, *ymin, *xmax, *ymax}}, "crs": crs84URI},
-				"temporal": map[string]any{"interval": [][]string{{*tmin, *tmax}}, "trs": "http://www.opengis.net/def/uom/ISO-8601/0/Gregorian"},
+				"temporal": map[string]any{"interval": [][]string{{rfc3339(*tmin), rfc3339(*tmax)}}, "trs": "http://www.opengis.net/def/uom/ISO-8601/0/Gregorian"},
 			}
 		}
 	}

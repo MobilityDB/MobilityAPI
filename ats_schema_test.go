@@ -71,8 +71,18 @@ func openAPINullable(n any, count *int) any {
 	return n
 }
 
-// ogcSchemas compiles the vendored document once and answers a validator per schema name.
+// ogcSchemas compiles the vendored document once and answers a validator per schema
+// name, with `format` asserted — the reading under which the standard's own named
+// values are admissible.
 func ogcSchemas(t *testing.T) func(string) *jsonschema.Schema {
+	return ogcSchemasFormat(t, true)
+}
+
+// ogcSchemasFormat compiles the vendored document under either reading of `format`.
+// The two are not a preference: JSON Schema makes `format` an annotation by default
+// and an assertion by opt-in, and issue 4's inverted `oneOf` means the standard's own
+// interpolation values are admissible under one reading and not the other.
+func ogcSchemasFormat(t *testing.T, assertFormat bool) func(string) *jsonschema.Schema {
 	t.Helper()
 	f, err := os.Open(ogcBundlePath)
 	if err != nil {
@@ -91,10 +101,9 @@ func ogcSchemas(t *testing.T) func(string) *jsonschema.Schema {
 	}
 
 	c := jsonschema.NewCompiler()
-	// `format` is an annotation by default in JSON Schema, and asserting it is what the
-	// standard's own motionCurve schema needs to admit the five interpolation values it
-	// itself names — TestATSSchemaMotionCurveIsInverted measures both readings.
-	c.AssertFormat()
+	if assertFormat {
+		c.AssertFormat()
+	}
 	if err := c.AddResource("ogc.json", doc); err != nil {
 		t.Fatalf("loading the OGC document: %v", err)
 	}
@@ -543,9 +552,14 @@ func TestATSSchemaInterpolationToken(t *testing.T) {
 }
 
 // publishedExampleFailures is what the standard's own examples score against the
-// standard's own schemas. It is asserted rather than reported so that a change in
-// the vendored document is noticed rather than absorbed.
-const publishedExampleFailures = 10
+// standard's own schemas, under each reading of `format`. Both are asserted rather
+// than reported so that a change in the vendored document is noticed rather than
+// absorbed, and so that the DIFFERENCE between them stays visible: it is issue 4's
+// inverted `oneOf` acting on the standard's own material.
+const (
+	publishedExampleFailures        = 10 // `format` asserted
+	publishedExampleFailuresDefault = 13 // `format` as an annotation, JSON Schema's default
+)
 
 // The standard's examples, measured against the standard's schemas.
 //
@@ -563,8 +577,6 @@ func TestATSSchemaPublishedExamples(t *testing.T) {
 	if err := json.Unmarshal(raw, &doc); err != nil {
 		t.Fatal(err)
 	}
-	schema := ogcSchemas(t)
-
 	type pair struct {
 		where, name string
 		example     any
@@ -599,30 +611,83 @@ func TestATSSchemaPublishedExamples(t *testing.T) {
 		t.Fatal("the vendored document pairs no example with a named schema, so this test would assert nothing")
 	}
 
-	var failed int
-	for _, pr := range pairs {
-		// jsonschema validates the value shape it unmarshals itself, so the example
-		// is round-tripped through the same reader the rest of the suite uses.
-		b, err := json.Marshal(pr.example)
-		if err != nil {
-			t.Fatalf("%s: re-encoding the example: %v", pr.where, err)
+	// Both readings, because issue 4 makes the count depend on the setting: with
+	// `format` an annotation the URI branch of `motionCurve` reduces to "any string",
+	// both branches then match a named value, and `oneOf` rejects the standard's own
+	// vocabulary. The difference between the two counts IS that defect, acting on the
+	// standard's own material.
+	for _, reading := range []struct {
+		what   string
+		assert bool
+		want   int
+	}{
+		{"`format` asserted", true, publishedExampleFailures},
+		{"`format` as an annotation (JSON Schema's default)", false, publishedExampleFailuresDefault},
+	} {
+		schema := ogcSchemasFormat(t, reading.assert)
+		var failed int
+		for _, pr := range pairs {
+			// jsonschema validates the value shape it unmarshals itself, so the example
+			// is round-tripped through the same reader the rest of the suite uses.
+			b, err := json.Marshal(pr.example)
+			if err != nil {
+				t.Fatalf("%s: re-encoding the example: %v", pr.where, err)
+			}
+			val, err := jsonschema.UnmarshalJSON(bytes.NewReader(b))
+			if err != nil {
+				t.Fatalf("%s: the published example is not JSON: %v", pr.where, err)
+			}
+			if err := schema(pr.name).Validate(val); err != nil {
+				failed++
+				if reading.assert {
+					t.Logf("the %s example does not satisfy the %s schema it is published under:\n  %v",
+						pr.where, pr.name, firstLines(err.Error(), 4))
+				}
+			}
 		}
-		val, err := jsonschema.UnmarshalJSON(bytes.NewReader(b))
-		if err != nil {
-			t.Fatalf("%s: the published example is not JSON: %v", pr.where, err)
-		}
-		if err := schema(pr.name).Validate(val); err != nil {
-			failed++
-			t.Logf("the %s example does not satisfy the %s schema it is published under:\n  %v",
-				pr.where, pr.name, firstLines(err.Error(), 4))
+		t.Logf("with %s: %d of %d published examples fail the schema they are attached to",
+			reading.what, failed, len(pairs))
+		if failed != reading.want {
+			t.Errorf("with %s, %d of %d published examples fail their own schema, want %d: the vendored "+
+				"document moved, so re-read openapi/README.md before changing this count",
+				reading.what, failed, len(pairs), reading.want)
 		}
 	}
-	t.Logf("%d of %d published examples fail the schema they are attached to (%d further example is inline and unnamed)",
-		failed, len(pairs), inline)
-	if failed != publishedExampleFailures {
-		t.Errorf("%d of %d published examples fail their own schema, want %d: the vendored document moved, "+
-			"so re-read openapi/README.md before changing this count", failed, len(pairs), publishedExampleFailures)
+	t.Logf("%d further example is attached to an inline schema and is not compared; "+
+		"%d responses declare a schema and publish no example at all", inline, exampleless(t))
+}
+
+// exampleless counts the responses that declare a schema and publish no example.
+// ⛔ THEY ARE NOT PASSES. A row with nothing to validate cannot be one, and counting
+// it among the examples that satisfy their schema is what makes a tally read better
+// than the material it is taken over.
+func exampleless(t *testing.T) int {
+	t.Helper()
+	raw, err := os.ReadFile(ogcBundlePath)
+	if err != nil {
+		t.Fatal(err)
 	}
+	var doc struct {
+		Components struct {
+			Responses map[string]struct {
+				Content map[string]map[string]any `json:"content"`
+			} `json:"responses"`
+		} `json:"components"`
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	var n int
+	for _, r := range doc.Components.Responses {
+		for _, mt := range r.Content {
+			_, hasSchema := mt["schema"]
+			_, hasExample := mt["example"]
+			if hasSchema && !hasExample {
+				n++
+			}
+		}
+	}
+	return n
 }
 
 // firstLines keeps a validation error readable in a log.

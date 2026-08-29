@@ -60,10 +60,24 @@ mistaken for coverage.
 ## The standard's own examples, measured against the standard's own schemas
 
 Every example this document publishes sits in a media-type object beside the schema it
-illustrates, so the pairing is the document's own. **10 of the 16 examples paired with a
-named schema do not satisfy it** — a seventeenth is attached to an inline schema and is not
-compared. `TestATSSchemaPublishedExamples` asserts that count, so a change in the vendored
-document is noticed rather than absorbed; the per-example reasons are in its log.
+illustrates, so the pairing is the document's own. Of the 16 examples paired with a named
+schema:
+
+| reading of `format` | examples failing their own schema |
+|---|---|
+| asserted | **10 of 16** |
+| an annotation — JSON Schema's default | **13 of 16** |
+
+Both are asserted by `TestATSSchemaPublishedExamples`, because the difference between them is
+the inverted `oneOf` above acting on the standard's own material: at the default reading the
+URI branch of `motionCurve` reduces to "any string", both branches match a named value, and
+`oneOf` rejects the vocabulary the standard itself defines. A seventeenth example is attached
+to an inline schema and is not compared. The per-example reasons are in the test's log.
+
+⛔ **TWO RESPONSES DECLARE A SCHEMA AND PUBLISH NO EXAMPLE** — `LandingPage` and `Conformance`.
+They are not passes: a row with nothing to validate cannot be one, and counting it among the
+examples that satisfy their schema makes a tally read better than the material it is taken
+over. The test reports them separately for that reason.
 
 The failures concentrate in two cells the schemas type in a way no document can meet:
 `temporalPrimitiveValue.values` is a single scalar beside a `datetimes` array of `minItems: 2`,

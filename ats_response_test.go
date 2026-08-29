@@ -156,7 +156,7 @@ func TestATSTPropertiesGetSuccess(t *testing.T) {
 		fakeAnswer{match: "SELECT 1 FROM", rows: [][]any{{1}}},
 		fakeAnswer{match: "to_regclass('mf_tproperty')", rows: [][]any{{"mf_tproperty"}}},
 		fakeAnswer{match: "FROM mf_tproperty WHERE", rows: [][]any{
-			{"speed", "TReal", "km/h", "speed over ground"},
+			{"speed", "TReal", uomURI + "km_h-1", "speed over ground"},
 			{"label", "TText", "", "vessel label"},
 		}},
 	)

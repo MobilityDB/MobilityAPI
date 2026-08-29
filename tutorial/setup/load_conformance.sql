@@ -96,12 +96,12 @@ CREATE TABLE IF NOT EXISTS mf_tproperty (
 DELETE FROM mf_tproperty WHERE cid IN ('conformance', 'conformance_alt');
 
 INSERT INTO mf_tproperty (cid, fid, name, ptype, uom, description, vfloat) VALUES
-  ('conformance', 1, 'speed', 'TReal', 'km/h', 'Speed over ground', tfloat
+  ('conformance', 1, 'speed', 'TReal', 'http://www.opengis.net/def/uom/UCUM/0/km_h-1', 'Speed over ground', tfloat
      '[12.5@2026-01-01 08:00:00+00, 14.0@2026-01-01 08:10:00+00,
        11.25@2026-01-01 08:25:00+00, 13.75@2026-01-01 08:45:00+00]');
 
 INSERT INTO mf_tproperty (cid, fid, name, ptype, uom, description, vint) VALUES
-  ('conformance', 1, 'heading', 'TInteger', 'deg', 'Course over ground', tint
+  ('conformance', 1, 'heading', 'TInteger', 'http://www.opengis.net/def/uom/UCUM/0/deg', 'Course over ground', tint
      '[45@2026-01-01 08:00:00+00, 50@2026-01-01 08:10:00+00,
        40@2026-01-01 08:25:00+00]');
 
@@ -116,5 +116,5 @@ INSERT INTO mf_tproperty (cid, fid, name, ptype, uom, description, vbool) VALUES
 -- A property on the second feature, so a delete on feature 1 cannot empty the
 -- table and pass a later listing by accident.
 INSERT INTO mf_tproperty (cid, fid, name, ptype, uom, description, vfloat) VALUES
-  ('conformance', 2, 'speed', 'TReal', 'km/h', 'Speed over ground', tfloat
+  ('conformance', 2, 'speed', 'TReal', 'http://www.opengis.net/def/uom/UCUM/0/km_h-1', 'Speed over ground', tfloat
      '[9.0@2026-01-01 09:00:00+00, 10.5@2026-01-01 09:30:00+00]');

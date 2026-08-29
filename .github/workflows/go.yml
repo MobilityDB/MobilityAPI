@@ -39,3 +39,66 @@ jobs:
 
       - name: Conformance report
         run: go test -run TestATSCoverageReport -v .
+
+  # The Annex A tests that read or write data, against a database. The job above
+  # runs the whole suite offline, where those tests skip by name; here they run.
+  #
+  # The image is a RELEASED MobilityDB, not master: a conformance claim names a
+  # version somebody can install, and a claim resting on an unreleased branch names
+  # nothing a reader can obtain.
+  conformance:
+    name: Conformance against a released MobilityDB
+    runs-on: ubuntu-latest
+    services:
+      mobilitydb:
+        image: mobilitydb/mobilitydb:18-3.6-1.3
+        env:
+          POSTGRES_PASSWORD: conformance
+          POSTGRES_DB: mfapi
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d mfapi"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      MFAPI_DSN: postgres://postgres:conformance@127.0.0.1:5432/mfapi?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Load the conformance fixture
+        run: psql "$MFAPI_DSN" -v ON_ERROR_STOP=1 -q -f tutorial/setup/load_conformance.sql
+
+      # ⛔ A SKIP IS NOT A PASS. Absent MFAPI_DSN every one of these tests skips and a
+      # job carrying them alone reports success having exercised nothing, which is the
+      # failure this job exists to prevent.
+      #
+      # The check is the SENTENCE those tests skip with, not the presence of a skip:
+      # the registry test records an identifier awaiting its live assertion by skipping
+      # a subtest, and reading that as an unreachable database convicts the job of a
+      # state it is deliberately in. What proves the database was reached is that no
+      # test skipped FOR WANT OF IT, and that a top-level group ran at all — a subtest
+      # line is indented, so the anchor counts groups rather than placeholders.
+      - name: Abstract tests against the fixture
+        run: |
+          # ⛔ THE EXIT STATUS OF A PIPELINE IS ITS LAST STAGE'S. Without pipefail the
+          # status read here is tee's, which is always 0, and a failing test reaches the
+          # guard below as though it had passed.
+          set -o pipefail
+          go test -run TestATSLive -v . 2>&1 | tee live.log
+          if grep -q 'needs the conformance fixture' live.log; then
+            echo "::error::a live conformance test skipped for want of MFAPI_DSN; the fixture database was not reached"
+            exit 1
+          fi
+          groups=$(grep -c '^--- PASS' live.log)
+          if [ "$groups" -lt 1 ]; then
+            echo "::error::no live conformance test group ran"
+            exit 1
+          fi
+          echo "$groups live conformance test group(s) ran against MobilityDB"

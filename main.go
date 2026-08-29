@@ -704,11 +704,11 @@ func tPropType(t string) (tType, bool) {
 	case "", "treal", "tfloat", "measure", "real", "float", "double", "number":
 		return tType{"MovingFloat", "vfloat", "tfloat", "TReal", "Linear"}, true
 	case "tint", "tinteger", "integer", "int":
-		return tType{"MovingInteger", "vint", "tint", "TInt", "Step"}, true
+		return tType{"MovingInteger", "vint", "tint", "TInteger", "Step"}, true
 	case "ttext", "tstring", "text", "string":
 		return tType{"MovingText", "vtext", "ttext", "TText", "Discrete"}, true
 	case "tbool", "tboolean", "boolean", "bool":
-		return tType{"MovingBoolean", "vbool", "tbool", "TBool", "Step"}, true
+		return tType{"MovingBoolean", "vbool", "tbool", "TBoolean", "Step"}, true
 	}
 	return tType{}, false
 }
@@ -1138,7 +1138,7 @@ func apiDoc(w http.ResponseWriter, r *http.Request) {
 			"/collections/{cid}/items/{fid}/tproperties": map[string]any{
 				"get": withParams(op("Stored temporal properties of a feature"),
 					limitParam, datetimeParam, subTemporalValueParam),
-				"post": op("Add one or more temporal properties (TReal | TInt | TText | TBool) to a feature"),
+				"post": op("Add one or more temporal properties (TReal | TInteger | TText | TBoolean) to a feature"),
 			},
 			"/collections/{cid}/items/{fid}/tproperties/{pname}": map[string]any{
 				"get": withParams(op("A stored temporal property as an OGC temporalProperty"),

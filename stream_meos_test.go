@@ -127,7 +127,7 @@ func TestMeosTextBoolAggregate(t *testing.T) {
 	}{{"ANY", true}, {"ALL", false}, {"COUNT_TRUE", 1.0}} {
 		ctx, cancel := context.WithCancel(context.Background())
 		src := make(chan Instant, 3)
-		h, err := e.Submit(ctx, QuerySpec{Ptype: "TBool", Agg: c.agg, Window: Window{Type: "COUNT", Size: 3}}, src)
+		h, err := e.Submit(ctx, QuerySpec{Ptype: "TBoolean", Agg: c.agg, Window: Window{Type: "COUNT", Size: 3}}, src)
 		if err != nil {
 			t.Fatal(err)
 		}

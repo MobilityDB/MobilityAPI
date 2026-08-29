@@ -12,12 +12,12 @@ func TestTPropType(t *testing.T) {
 		"":         {"MovingFloat", "vfloat", "tfloat", "TReal", "Linear"},
 		"TReal":    {"MovingFloat", "vfloat", "tfloat", "TReal", "Linear"},
 		"measure":  {"MovingFloat", "vfloat", "tfloat", "TReal", "Linear"},
-		"TInt":     {"MovingInteger", "vint", "tint", "TInt", "Step"},
-		"integer":  {"MovingInteger", "vint", "tint", "TInt", "Step"},
+		"TInt":     {"MovingInteger", "vint", "tint", "TInteger", "Step"},
+		"integer":  {"MovingInteger", "vint", "tint", "TInteger", "Step"},
 		"TText":    {"MovingText", "vtext", "ttext", "TText", "Discrete"},
 		"string":   {"MovingText", "vtext", "ttext", "TText", "Discrete"},
-		"TBool":    {"MovingBoolean", "vbool", "tbool", "TBool", "Step"},
-		"BOOLEAN ": {"MovingBoolean", "vbool", "tbool", "TBool", "Step"},
+		"TBool":    {"MovingBoolean", "vbool", "tbool", "TBoolean", "Step"},
+		"BOOLEAN ": {"MovingBoolean", "vbool", "tbool", "TBoolean", "Step"},
 	}
 	for in, want := range cases {
 		got, ok := tPropType(in)

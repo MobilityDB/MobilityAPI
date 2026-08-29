@@ -32,7 +32,7 @@ import (
 // Instant is one stream record: a temporal-property value at a timestamp. The
 // timestamp is carried verbatim as its ISO-8601 string so it round-trips
 // through MEOS without a parse/format step. V holds a numeric value (TReal /
-// TInt); S holds a text value (TText) or "t"/"f" (TBool).
+// TInteger); S holds a text value (TText) or "t"/"f" (TBoolean).
 type Instant struct {
 	T string  `json:"datetime"`
 	V float64 `json:"value"`
@@ -51,7 +51,7 @@ type QuerySpec struct {
 	Arg      float64       // operand for scalar ops (add/sub/mul/div); ignored otherwise
 	Agg      string        // a window aggregation, e.g. "AVG" or "MAX"
 	Window   Window        // the window over which Agg is computed
-	Ptype    string        // the property's OGC type (TReal | TInt | TText | TBool)
+	Ptype    string        // the property's OGC type (TReal | TInteger | TText | TBoolean)
 	Interval time.Duration // pacing between emitted records
 	Engine   string        // per-query engine override ("flink"|"kafka"|"meos-local"); empty = the process default
 }
@@ -72,10 +72,10 @@ type Window struct {
 // the window's values; text and boolean aggregations reduce the MEOS value
 // arrays.
 var aggByType = map[string]map[string]bool{
-	"TReal": {"COUNT": true, "SUM": true, "AVG": true, "MIN": true, "MAX": true},
-	"TInt":  {"COUNT": true, "SUM": true, "AVG": true, "MIN": true, "MAX": true},
-	"TText": {"COUNT": true, "COUNT_DISTINCT": true},
-	"TBool": {"COUNT": true, "ANY": true, "ALL": true, "COUNT_TRUE": true, "COUNT_FALSE": true},
+	"TReal":    {"COUNT": true, "SUM": true, "AVG": true, "MIN": true, "MAX": true},
+	"TInteger": {"COUNT": true, "SUM": true, "AVG": true, "MIN": true, "MAX": true},
+	"TText":    {"COUNT": true, "COUNT_DISTINCT": true},
+	"TBoolean": {"COUNT": true, "ANY": true, "ALL": true, "COUNT_TRUE": true, "COUNT_FALSE": true},
 }
 
 // aggregations is the union of all valid aggregation names (the engine validates

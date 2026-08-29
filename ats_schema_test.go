@@ -396,3 +396,72 @@ func TestATSSchemaBundleMatchesOGC(t *testing.T) {
 			ogcBundlePath, ogcBundleURL, len(vendored), len(published))
 	}
 }
+
+// /conf/movingfeatures/tproperty-get-success — the `type` a TemporalProperty
+// document names is one the standard defines.
+//
+// ⛔ THE ADMITTED SET IS READ OUT OF THE VENDORED DOCUMENT, never written here: a
+// constant chosen in this file would agree with whatever the tier does and assert
+// nothing. The schema states the enum once, at
+// components/schemas/temporalProperty/properties/type.
+//
+// ⛔ THE WHOLE DOCUMENT CANNOT BE VALIDATED THE WAY ITS SIBLINGS ARE, and the
+// reason is the standard's, not the tier's: `temporalPrimitiveValue` declares
+// `datetimes` an array of `minItems: 2` beside `values` as a single scalar
+// (`oneOf` number/string/boolean), so no document carrying a value per instant
+// satisfies it; and its `interpolation` enum reads Discrete/Step/Linear/Regression
+// where the temporal-geometry half of the same document names Stepwise. This
+// asserts the cell that has one authority, which is the type token.
+func TestATSSchemaTemporalPropertyType(t *testing.T) {
+	f, err := os.Open(ogcBundlePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	var doc struct {
+		Components struct {
+			Schemas struct {
+				TemporalProperty struct {
+					Properties struct {
+						Type struct {
+							Enum []string `json:"enum"`
+						} `json:"type"`
+					} `json:"properties"`
+				} `json:"temporalProperty"`
+			} `json:"schemas"`
+		} `json:"components"`
+	}
+	if err := json.NewDecoder(f).Decode(&doc); err != nil {
+		t.Fatalf("reading %s: %v", ogcBundlePath, err)
+	}
+	admitted := doc.Components.Schemas.TemporalProperty.Properties.Type.Enum
+	if len(admitted) == 0 {
+		t.Fatal("the vendored document declares no type enum, so this test would assert nothing")
+	}
+	in := func(s string) bool {
+		for _, a := range admitted {
+			if a == s {
+				return true
+			}
+		}
+		return false
+	}
+	// Every spelling the tier accepts, so a token is checked per stored type rather
+	// than for the one type a single case would happen to cover.
+	for _, stored := range []string{
+		"TReal", "tfloat", "measure", "number",
+		"TInteger", "tint", "integer", "int",
+		"TText", "tstring", "text", "string",
+		"TBoolean", "tbool", "boolean", "bool",
+	} {
+		tt, ok := tPropType(stored)
+		if !ok {
+			t.Errorf("the tier does not resolve the stored type %q", stored)
+			continue
+		}
+		if !in(tt.ogc) {
+			t.Errorf("a %q property is written as type %q, which the standard does not define; it admits %v",
+				stored, tt.ogc, admitted)
+		}
+	}
+}

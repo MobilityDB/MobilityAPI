@@ -56,3 +56,16 @@ syntax of a date-time is RFC 3339 section 5.6 and that a server SHALL interpret 
 makes the geometry schema weaker than the standard it belongs to.
 `TestATSSchemaDatetimeFormatIsAsymmetric` pins the asymmetry, so the gap is stated rather than
 mistaken for coverage.
+
+## The standard's own examples, measured against the standard's own schemas
+
+Every example this document publishes sits in a media-type object beside the schema it
+illustrates, so the pairing is the document's own. **10 of the 16 examples paired with a
+named schema do not satisfy it** — a seventeenth is attached to an inline schema and is not
+compared. `TestATSSchemaPublishedExamples` asserts that count, so a change in the vendored
+document is noticed rather than absorbed; the per-example reasons are in its log.
+
+The failures concentrate in two cells the schemas type in a way no document can meet:
+`temporalPrimitiveValue.values` is a single scalar beside a `datetimes` array of `minItems: 2`,
+and `temporalProperty` carries that value object. They are defects in the standard, not in the
+examples — the examples are what a reader would write.

@@ -15,10 +15,12 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
@@ -538,4 +540,96 @@ func TestATSSchemaInterpolationToken(t *testing.T) {
 				c.what, got, c.admitted)
 		}
 	}
+}
+
+// publishedExampleFailures is what the standard's own examples score against the
+// standard's own schemas. It is asserted rather than reported so that a change in
+// the vendored document is noticed rather than absorbed.
+const publishedExampleFailures = 10
+
+// The standard's examples, measured against the standard's schemas.
+//
+// Every example the document publishes sits in a media-type object beside the
+// schema it illustrates, so the pairing is the document's own and nothing here
+// chooses it. An example that does not satisfy the schema it is attached to is a
+// defect in the standard, not in this tier, and the count is what makes that
+// claim checkable instead of quotable.
+func TestATSSchemaPublishedExamples(t *testing.T) {
+	raw, err := os.ReadFile(ogcBundlePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	schema := ogcSchemas(t)
+
+	type pair struct {
+		where, name string
+		example     any
+	}
+	var pairs []pair
+	var inline int
+	var walk func(o any, p string)
+	walk = func(o any, p string) {
+		switch v := o.(type) {
+		case map[string]any:
+			if s, ok := v["schema"].(map[string]any); ok {
+				if ex, has := v["example"]; has {
+					if ref, ok := s["$ref"].(string); ok {
+						n := ref[strings.LastIndex(ref, "/")+1:]
+						pairs = append(pairs, pair{p, n, ex})
+					} else {
+						inline++
+					}
+				}
+			}
+			for k, sub := range v {
+				walk(sub, p+"/"+k)
+			}
+		case []any:
+			for i, sub := range v {
+				walk(sub, fmt.Sprintf("%s[%d]", p, i))
+			}
+		}
+	}
+	walk(doc, "")
+	if len(pairs) == 0 {
+		t.Fatal("the vendored document pairs no example with a named schema, so this test would assert nothing")
+	}
+
+	var failed int
+	for _, pr := range pairs {
+		// jsonschema validates the value shape it unmarshals itself, so the example
+		// is round-tripped through the same reader the rest of the suite uses.
+		b, err := json.Marshal(pr.example)
+		if err != nil {
+			t.Fatalf("%s: re-encoding the example: %v", pr.where, err)
+		}
+		val, err := jsonschema.UnmarshalJSON(bytes.NewReader(b))
+		if err != nil {
+			t.Fatalf("%s: the published example is not JSON: %v", pr.where, err)
+		}
+		if err := schema(pr.name).Validate(val); err != nil {
+			failed++
+			t.Logf("the %s example does not satisfy the %s schema it is published under:\n  %v",
+				pr.where, pr.name, firstLines(err.Error(), 4))
+		}
+	}
+	t.Logf("%d of %d published examples fail the schema they are attached to (%d further example is inline and unnamed)",
+		failed, len(pairs), inline)
+	if failed != publishedExampleFailures {
+		t.Errorf("%d of %d published examples fail their own schema, want %d: the vendored document moved, "+
+			"so re-read openapi/README.md before changing this count", failed, len(pairs), publishedExampleFailures)
+	}
+}
+
+// firstLines keeps a validation error readable in a log.
+func firstLines(s string, n int) string {
+	parts := strings.SplitN(s, "\n", n+1)
+	if len(parts) > n {
+		parts = append(parts[:n], "  …")
+	}
+	return strings.Join(parts, "\n")
 }

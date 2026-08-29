@@ -28,7 +28,8 @@ type atsKind int
 const (
 	atsRoute    atsKind = iota // the tier must serve the method and path it issues
 	atsDocument                // the service description or conformance declaration settles it
-	atsLive                    // needs a populated backend
+	atsResponse                // the returned document is asserted against a scripted backend
+	atsLive                    // needs a populated backend: stateful round-trips
 )
 
 // atsTest is one abstract test of Annex A.
@@ -54,11 +55,11 @@ const (
 var atsPart1 = []atsTest{
 	// -- mf-collection ------------------------------------------------------
 	{"/conf/mf-collection/collections-get", classCollection, atsRoute, "GET", "/collections", "the Collections can be retrieved from the expected location"},
-	{"/conf/mf-collection/collections-get-success", classCollection, atsLive, "", "", "the Collections comply with the required structure, itemType is movingfeature"},
+	{"/conf/mf-collection/collections-get-success", classCollection, atsResponse, "", "", "the Collections comply with the required structure, itemType is movingfeature"},
 	{"/conf/mf-collection/collections-post", classCollection, atsRoute, "POST", "/collections", "a Collection can be created at the expected location"},
 	{"/conf/mf-collection/collections-post-success", classCollection, atsLive, "", "", "the POST response is 201 or 202"},
 	{"/conf/mf-collection/collection-get", classCollection, atsRoute, "GET", "/collections/{cid}", "the Collection can be retrieved from the expected location"},
-	{"/conf/mf-collection/collection-get-success", classCollection, atsLive, "", "", "the Collection complies with the required structure and contents"},
+	{"/conf/mf-collection/collection-get-success", classCollection, atsResponse, "", "", "the Collection complies with the required structure and contents"},
 	{"/conf/mf-collection/collection-put", classCollection, atsRoute, "PUT", "/collections/{cid}", "the Collection can be replaced at the expected location"},
 	{"/conf/mf-collection/collections-put-success", classCollection, atsLive, "", "", "the PUT response is 200, 202 or 204"},
 	{"/conf/mf-collection/collection-delete", classCollection, atsRoute, "DELETE", "/collections/{cid}", "the Collection can be deleted at the expected location"},
@@ -76,7 +77,7 @@ var atsPart1 = []atsTest{
 
 	// -- movingfeatures: the temporal geometry ------------------------------
 	{"/conf/movingfeatures/tgsequence-get", classFeatures, atsRoute, "GET", "/collections/{cid}/items/{fid}/tgsequence", "the TemporalGeometrySequence can be extracted using query parameters"},
-	{"/conf/movingfeatures/tgsequence-get-success", classFeatures, atsLive, "", "", "type is MovingGeometryCollection and prism holds TemporalPrimitiveGeometry items"},
+	{"/conf/movingfeatures/tgsequence-get-success", classFeatures, atsResponse, "", "", "type is MovingGeometryCollection and prism holds TemporalPrimitiveGeometry items"},
 	{"/conf/movingfeatures/tgsequence-post", classFeatures, atsRoute, "POST", "/collections/{cid}/items/{fid}/tgsequence", "a TemporalPrimitiveGeometry can be created at the expected location"},
 	{"/conf/movingfeatures/tgsequence-post-success", classFeatures, atsLive, "", "", "the POST response is 201 or 202"},
 	{"/conf/movingfeatures/tpgeometry-delete", classFeatures, atsRoute, "DELETE", "/collections/{cid}/items/{fid}/tgsequence/{tgid}", "the TemporalPrimitiveGeometry can be deleted at the expected location"},
@@ -87,7 +88,7 @@ var atsPart1 = []atsTest{
 
 	// -- movingfeatures: the temporal properties ----------------------------
 	{"/conf/movingfeatures/tproperties-get", classFeatures, atsRoute, "GET", "/collections/{cid}/items/{fid}/tproperties", "the TemporalProperties can be extracted using query parameters"},
-	{"/conf/movingfeatures/tproperties-get-success", classFeatures, atsLive, "", "", "each entry carries name and a type of TBoolean, TText, TInteger, TReal or TImage"},
+	{"/conf/movingfeatures/tproperties-get-success", classFeatures, atsResponse, "", "", "each entry carries name and a type of TBoolean, TText, TInteger, TReal or TImage"},
 	{"/conf/movingfeatures/tproperties-post", classFeatures, atsRoute, "POST", "/collections/{cid}/items/{fid}/tproperties", "a TemporalProperty can be created at the expected location"},
 	{"/conf/movingfeatures/tproperties-post-success", classFeatures, atsLive, "", "", "the POST response is 201 or 202"},
 	{"/conf/movingfeatures/tproperty-get", classFeatures, atsRoute, "GET", "/collections/{cid}/items/{fid}/tproperties/{pname}", "the TemporalProperty can be extracted using query parameters"},
@@ -284,6 +285,8 @@ func TestATSCoverageReport(t *testing.T) {
 			}
 		case atsDocument:
 			state = "service description"
+		case atsResponse:
+			state, served = "response asserted", served+1
 		case atsLive:
 			state, live = "needs a backend", live+1
 		}

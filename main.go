@@ -93,6 +93,30 @@ func main() {
 		}
 	}
 
+	mux := newMux()
+
+	addr := ":" + strconv.Itoa(envInt("MFAPI_PORT", 8088))
+	srv := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second}
+	// streaming/export responses can be long-lived: no WriteTimeout (use ctx).
+	go func() {
+		log.Printf("MobilityAPI-go on %s (pool max=%d, default/max limit=%d/%d) — streaming, keyset-paged, lakehouse-ready", addr, envInt("MFAPI_MAXCONNS", 16), defaultLimit, maxLimit)
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Fatal(err)
+		}
+	}()
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
+	<-sig
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	srv.Shutdown(ctx)
+	log.Println("shut down")
+}
+
+// newMux is the routing table of the tier: every path the service serves,
+// with the method each one accepts. main and the conformance tests share it,
+// so a test exercises the routing the service runs.
+func newMux() *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) { writeRaw(w, 200, `{"status":"ok"}`) })
 	mux.HandleFunc("GET /", landing)
@@ -142,23 +166,7 @@ func main() {
 	mux.HandleFunc("GET /collections/{cid}/items/{fid}/tgsequence/queries/{qid}", getQuery)
 	mux.HandleFunc("GET /collections/{cid}/items/{fid}/tgsequence/queries/{qid}/stream", streamQuery)
 	mux.HandleFunc("DELETE /collections/{cid}/items/{fid}/tgsequence/queries/{qid}", deleteQuery)
-
-	addr := ":" + strconv.Itoa(envInt("MFAPI_PORT", 8088))
-	srv := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second}
-	// streaming/export responses can be long-lived: no WriteTimeout (use ctx).
-	go func() {
-		log.Printf("MobilityAPI-go on %s (pool max=%d, default/max limit=%d/%d) — streaming, keyset-paged, lakehouse-ready", addr, envInt("MFAPI_MAXCONNS", 16), defaultLimit, maxLimit)
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Fatal(err)
-		}
-	}()
-	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
-	<-sig
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	srv.Shutdown(ctx)
-	log.Println("shut down")
+	return mux
 }
 
 func writeRaw(w http.ResponseWriter, code int, body string) {

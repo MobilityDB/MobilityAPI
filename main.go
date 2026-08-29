@@ -1012,6 +1012,35 @@ func apiDoc(w http.ResponseWriter, r *http.Request) {
 		return map[string]any{"summary": summary, "responses": map[string]any{"200": map[string]any{"description": "OK"}}}
 	}
 	get := func(summary string) map[string]any { return map[string]any{"get": op(summary)} }
+	// The query parameters OGC API - Moving Features - Part 1 specifies, in the
+	// form its parameter requirements give them. getWith attaches them to the
+	// operation that accepts them.
+	param := func(name, in, desc string, schema map[string]any) map[string]any {
+		return map[string]any{"name": name, "in": in, "description": desc, "required": false,
+			"style": "form", "explode": false, "schema": schema}
+	}
+	limitParam := param("limit", "query",
+		"The optional limit parameter limits the number of items presented in the response document.",
+		map[string]any{"type": "integer", "minimum": 1, "maximum": maxLimit, "default": defaultLimit})
+	bboxParam := param("bbox", "query",
+		"Only features whose geometry intersects the bounding box are selected.",
+		map[string]any{"type": "array", "minItems": 4, "maxItems": 6, "items": map[string]any{"type": "number"}})
+	datetimeParam := param("datetime", "query",
+		"Either a date-time or an interval. Only features that have a temporal geometry or temporal property that intersects the value are selected.",
+		map[string]any{"type": "string"})
+	leafParam := param("leaf", "query",
+		"Only features with a temporal geometry or temporal property that intersect the given date-times are selected. The date-times are given as a comma-separated list.",
+		map[string]any{"type": "array", "items": map[string]any{"type": "string", "format": "date-time"}})
+	subTrajectoryParam := param("subTrajectory", "query",
+		"Only a subsequence of the temporal geometry clipped to the datetime interval is returned. The datetime parameter is then a bounded interval and the leaf parameter is not used.",
+		map[string]any{"type": "boolean", "default": false})
+	subTemporalValueParam := param("subTemporalValue", "query",
+		"Only a subsequence of the temporal property clipped to the datetime interval is returned. The datetime parameter is then a bounded interval and the leaf parameter is not used.",
+		map[string]any{"type": "boolean", "default": false})
+	withParams := func(o map[string]any, params ...map[string]any) map[string]any {
+		o["parameters"] = params
+		return o
+	}
 	doc := map[string]any{
 		"openapi": "3.0.3",
 		"info":    map[string]any{"title": "MobilityAPI-go", "version": "1.0.0", "description": "OGC API – Moving Features over MobilityDB"},
@@ -1020,7 +1049,7 @@ func apiDoc(w http.ResponseWriter, r *http.Request) {
 			"/api":         get("API definition"),
 			"/conformance": get("Conformance declaration"),
 			"/collections": map[string]any{
-				"get":  op("Moving feature collections"),
+				"get":  withParams(op("Moving feature collections"), limitParam),
 				"post": op("Register a new collection"),
 			},
 			"/collections/{cid}": map[string]any{
@@ -1029,7 +1058,8 @@ func apiDoc(w http.ResponseWriter, r *http.Request) {
 				"delete": op("Delete a collection"),
 			},
 			"/collections/{cid}/items": map[string]any{
-				"get":  op("Moving features (streamed, keyset-paged; bbox/datetime/subtrajectory filters)"),
+				"get": withParams(op("Moving features (streamed, keyset-paged; bbox/datetime/subtrajectory filters)"),
+					limitParam, bboxParam, datetimeParam, subTrajectoryParam),
 				"post": op("Insert a moving feature"),
 			},
 			"/collections/{cid}/items/{fid}": map[string]any{
@@ -1038,7 +1068,8 @@ func apiDoc(w http.ResponseWriter, r *http.Request) {
 				"delete": op("Delete a moving feature"),
 			},
 			"/collections/{cid}/items/{fid}/tgsequence": map[string]any{
-				"get":  op("Temporal geometry sequence (TemporalGeometrySequence; members addressable by their 1-based id)"),
+				"get": withParams(op("Temporal geometry sequence (TemporalGeometrySequence; members addressable by their 1-based id)"),
+					limitParam, bboxParam, datetimeParam, leafParam, subTrajectoryParam),
 				"post": op("Append a temporally-disjoint member sequence"),
 			},
 			"/collections/{cid}/items/{fid}/tgsequence/{tgid}": map[string]any{
@@ -1046,11 +1077,13 @@ func apiDoc(w http.ResponseWriter, r *http.Request) {
 			},
 			"/collections/{cid}/items/{fid}/tgsequence/{tgid}/{qtype}": get("Derived query on a member geometry: distance | velocity (acceleration → 501, not derivable for this motion model)"),
 			"/collections/{cid}/items/{fid}/tproperties": map[string]any{
-				"get":  op("Stored temporal properties of a feature"),
+				"get": withParams(op("Stored temporal properties of a feature"),
+					limitParam, datetimeParam, subTemporalValueParam),
 				"post": op("Add one or more temporal properties (TReal | TInt | TText | TBool) to a feature"),
 			},
 			"/collections/{cid}/items/{fid}/tproperties/{pname}": map[string]any{
-				"get":    op("A stored temporal property as an OGC temporalProperty"),
+				"get": withParams(op("A stored temporal property as an OGC temporalProperty"),
+					datetimeParam, leafParam, subTemporalValueParam),
 				"post":   op("Append values to a temporal property (temporally disjoint; overlap → 409)"),
 				"delete": op("Delete a temporal property"),
 			},

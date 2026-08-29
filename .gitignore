@@ -4,3 +4,4 @@ MobilityAPI-go
 *.log
 mfapi
 mfapi-meos
+live.log

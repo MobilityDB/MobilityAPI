@@ -1,0 +1,31 @@
+{
+  "name": "velocity",
+  "type": "TReal",
+  "form": "http://www.opengis.net/def/uom/UCUM/0/m_s-1",
+  "description": "Speed over ground (velocity magnitude), a piecewise-constant function of the trajectory.",
+  "valueSequence": [
+    {
+      "datetimes": [
+        "2026-01-01T08:00:00+00:00",
+        "2026-01-01T08:10:00+00:00",
+        "2026-01-01T08:25:00+00:00",
+        "2026-01-01T08:45:00+00:00"
+      ],
+      "interpolation": "Stepwise",
+      "lower_inc": true,
+      "upper_inc": true,
+      "values": [
+        1.863389981249825,
+        1.756820922315766,
+        1.502313031443329,
+        1.502313031443329
+      ]
+    }
+  ],
+  "links": [
+    {
+      "rel": "self",
+      "href": "/collections/conformance/items/1/tgsequence/1/velocity"
+    }
+  ]
+}

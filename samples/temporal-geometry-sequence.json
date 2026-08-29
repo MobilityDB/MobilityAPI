@@ -1,0 +1,48 @@
+{
+  "type": "TemporalGeometrySequence",
+  "geometrySequence": [
+    {
+      "coordinates": [
+        [
+          575000,
+          6220000
+        ],
+        [
+          576000,
+          6220500
+        ],
+        [
+          577500,
+          6221000
+        ],
+        [
+          579000,
+          6222000
+        ]
+      ],
+      "crs": {
+        "type": "Name",
+        "properties": {
+          "name": "urn:ogc:def:crs:EPSG::25832"
+        }
+      },
+      "datetimes": [
+        "2026-01-01T08:00:00+00:00",
+        "2026-01-01T08:10:00+00:00",
+        "2026-01-01T08:25:00+00:00",
+        "2026-01-01T08:45:00+00:00"
+      ],
+      "id": 1,
+      "interpolation": "Linear",
+      "lower_inc": true,
+      "type": "MovingPoint",
+      "upper_inc": true
+    }
+  ],
+  "links": [
+    {
+      "rel": "self",
+      "href": "/collections/conformance/items/1/tgsequence"
+    }
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "name": "anchored",
+  "type": "TBoolean",
+  "description": "Whether the vessel is at anchor",
+  "valueSequence": [
+    {
+      "datetimes": [
+        "2026-01-01T08:00:00+00:00",
+        "2026-01-01T08:45:00+00:00"
+      ],
+      "interpolation": "Stepwise",
+      "lower_inc": true,
+      "upper_inc": true,
+      "values": [
+        false,
+        true
+      ]
+    }
+  ],
+  "links": [
+    {
+      "rel": "self",
+      "href": "/collections/conformance/items/1/tproperties/anchored"
+    }
+  ]
+}

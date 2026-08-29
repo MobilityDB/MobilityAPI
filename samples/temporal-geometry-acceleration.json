@@ -1,0 +1,5 @@
+{
+  "code": "501",
+  "description": "acceleration is not derivable: linearly interpolated position gives a piecewise-constant (Step) speed, whose derivative is zero within each segment and undefined at the vertices"
+}
+

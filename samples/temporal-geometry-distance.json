@@ -1,0 +1,31 @@
+{
+  "name": "distance",
+  "type": "TReal",
+  "form": "http://www.opengis.net/def/uom/UCUM/0/m",
+  "description": "Cumulative distance travelled along the trajectory.",
+  "valueSequence": [
+    {
+      "datetimes": [
+        "2026-01-01T08:00:00+00:00",
+        "2026-01-01T08:10:00+00:00",
+        "2026-01-01T08:25:00+00:00",
+        "2026-01-01T08:45:00+00:00"
+      ],
+      "interpolation": "Linear",
+      "lower_inc": true,
+      "upper_inc": true,
+      "values": [
+        0,
+        1118.033988749895,
+        2699.172818834085,
+        4501.94845656608
+      ]
+    }
+  ],
+  "links": [
+    {
+      "rel": "self",
+      "href": "/collections/conformance/items/1/tgsequence/1/distance"
+    }
+  ]
+}

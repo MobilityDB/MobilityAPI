@@ -1,0 +1,100 @@
+{
+  "type": "Feature",
+  "id": "1",
+  "properties": {
+    "mmsi": 219000001,
+    "name": "Alpha"
+  },
+  "crs": {
+    "type": "Name",
+    "properties": {
+      "name": "urn:ogc:def:crs:EPSG::25832"
+    }
+  },
+  "trs": {
+    "type": "Link",
+    "properties": {
+      "href": "http://www.opengis.net/def/uom/ISO-8601/0/Gregorian",
+      "type": "ogcdef"
+    }
+  },
+  "bbox": [
+    575000,
+    6220000,
+    579000,
+    6222000
+  ],
+  "time": [
+    "2026-01-01T08:00:00Z",
+    "2026-01-01T08:45:00Z"
+  ],
+  "temporalGeometry": {
+    "type": "MovingPoint",
+    "crs": {
+      "type": "Name",
+      "properties": {
+        "name": "urn:ogc:def:crs:EPSG::25832"
+      }
+    },
+    "coordinates": [
+      [
+        575000,
+        6220000
+      ],
+      [
+        576000,
+        6220500
+      ],
+      [
+        577500,
+        6221000
+      ],
+      [
+        579000,
+        6222000
+      ]
+    ],
+    "datetimes": [
+      "2026-01-01T08:00:00+00:00",
+      "2026-01-01T08:10:00+00:00",
+      "2026-01-01T08:25:00+00:00",
+      "2026-01-01T08:45:00+00:00"
+    ],
+    "lower_inc": true,
+    "upper_inc": true,
+    "interpolation": "Linear"
+  },
+  "geometry": {
+    "type": "LineString",
+    "crs": {
+      "type": "name",
+      "properties": {
+        "name": "urn:ogc:def:crs:EPSG::25832"
+      }
+    },
+    "coordinates": [
+      [
+        575000,
+        6220000
+      ],
+      [
+        576000,
+        6220500
+      ],
+      [
+        577500,
+        6221000
+      ],
+      [
+        579000,
+        6222000
+      ]
+    ]
+  },
+  "links": [
+    {
+      "rel": "self",
+      "href": "/collections/conformance/items/1"
+    }
+  ]
+}

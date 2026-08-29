@@ -1,0 +1,47 @@
+{
+  "crs": [
+    "http://www.opengis.net/def/crs/EPSG/0/25832"
+  ],
+  "description": "A fixed two-feature corpus for the OGC API - Moving Features Part 1 abstract tests",
+  "extent": {
+    "spatial": {
+      "bbox": [
+        [
+          10.189934628004437,
+          56.11035654255155,
+          10.271202546128217,
+          56.136503619599175
+        ]
+      ],
+      "crs": "http://www.opengis.net/def/crs/OGC/1.3/CRS84"
+    },
+    "temporal": {
+      "interval": [
+        [
+          "2026-01-01T08:00:00Z",
+          "2026-01-01T09:30:00Z"
+        ]
+      ],
+      "trs": "http://www.opengis.net/def/uom/ISO-8601/0/Gregorian"
+    }
+  },
+  "id": "conformance",
+  "itemType": "movingfeature",
+  "links": [
+    {
+      "href": "/collections/conformance",
+      "rel": "self"
+    },
+    {
+      "href": "/collections/conformance/items",
+      "rel": "items"
+    },
+    {
+      "href": "/collections/conformance/export",
+      "rel": "enclosure",
+      "type": "application/x-ndjson"
+    }
+  ],
+  "title": "conformance"
+}
+

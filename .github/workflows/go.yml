@@ -102,3 +102,38 @@ jobs:
             exit 1
           fi
           echo "$groups live conformance test group(s) ran against MobilityDB"
+
+      # ⛔ A SAMPLE THAT HAS DRIFTED IS WORSE THAN NO SAMPLE: it states what the
+      # service used to answer, and a reader has no way to tell. Re-emitting here
+      # and diffing against what is committed is what keeps samples/ the current
+      # answer rather than a snapshot somebody forgot to refresh.
+      #
+      # The TemporalProperties document carries the time it was written, which the
+      # standard defines it to carry, so that one line is normalised on both sides.
+      - name: The committed samples are what the service writes
+        run: |
+          set -o pipefail
+          go run . -emit samples.emitted
+          norm() { sed -E 's/"timeStamp": "[^"]*"/"timeStamp": "<written>"/' "$1"; }
+          rc=0
+          for f in samples/*; do
+            b=$(basename "$f")
+            if [ ! -f "samples.emitted/$b" ]; then
+              echo "::error::samples/$b is no longer a resource the service serves"; rc=1; continue
+            fi
+            if ! diff -q <(norm "$f") <(norm "samples.emitted/$b") >/dev/null; then
+              echo "::error::samples/$b is not what the service writes; re-run: go run . -emit samples"
+              diff -u <(norm "$f") <(norm "samples.emitted/$b") | head -40
+              rc=1
+            fi
+          done
+          for f in samples.emitted/*; do
+            b=$(basename "$f")
+            if [ ! -f "samples/$b" ]; then
+              echo "::error::the service serves a resource samples/ does not carry: $b"; rc=1
+            fi
+          done
+          if [ "$rc" -eq 0 ]; then
+            echo "$(ls samples/*.json | wc -l) sample documents are what the service writes"
+          fi
+          exit $rc

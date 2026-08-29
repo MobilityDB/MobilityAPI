@@ -1646,7 +1646,9 @@ func postTgSequence(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, 404, "feature not found")
 		return
 	}
-	writeJSON(w, 200, map[string]any{"message": "appended", "id": strconv.Itoa(fid)})
+	// Annex A requires 201 or 202 of this POST: appending a temporal primitive
+	// geometry creates a member of the feature's temporal geometry.
+	writeJSON(w, 201, map[string]any{"message": "appended", "id": strconv.Itoa(fid)})
 }
 
 // postTProperties registers one or more stored temporal properties on a feature
@@ -1798,7 +1800,9 @@ func postTPropertyValues(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, 404, "unknown temporal property: "+name)
 		return
 	}
-	writeJSON(w, 200, map[string]any{"message": "appended", "name": name})
+	// Annex A requires 201 or 202 of this POST: appending values creates temporal
+	// primitive values of the property.
+	writeJSON(w, 201, map[string]any{"message": "appended", "name": name})
 }
 
 // deleteTProperty removes a stored temporal property from a feature.

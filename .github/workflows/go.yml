@@ -1,0 +1,41 @@
+name: Go
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  build:
+    name: Build and test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Formatting
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "gofmt reports:"; echo "$unformatted"; exit 1
+          fi
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Build
+        run: go build ./...
+
+      # The default build links no MEOS, so this is the control plane, the OGC
+      # Part 1 abstract test suite and the streaming catalogue. The meos-tagged
+      # engine tests need libmeos on the link path and run where it is present.
+      - name: Test
+        run: go test ./...
+
+      - name: Conformance report
+        run: go test -run TestATSCoverageReport -v .

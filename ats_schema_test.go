@@ -409,9 +409,8 @@ func TestATSSchemaBundleMatchesOGC(t *testing.T) {
 // reason is the standard's, not the tier's: `temporalPrimitiveValue` declares
 // `datetimes` an array of `minItems: 2` beside `values` as a single scalar
 // (`oneOf` number/string/boolean), so no document carrying a value per instant
-// satisfies it; and its `interpolation` enum reads Discrete/Step/Linear/Regression
-// where the temporal-geometry half of the same document names Stepwise. This
-// asserts the cell that has one authority, which is the type token.
+// satisfies it. This asserts the cells that are satisfiable, of which the type
+// token is one.
 func TestATSSchemaTemporalPropertyType(t *testing.T) {
 	f, err := os.Open(ogcBundlePath)
 	if err != nil {
@@ -462,6 +461,81 @@ func TestATSSchemaTemporalPropertyType(t *testing.T) {
 		if !in(tt.ogc) {
 			t.Errorf("a %q property is written as type %q, which the standard does not define; it admits %v",
 				stored, tt.ogc, admitted)
+		}
+	}
+}
+
+// The interpolation the tier writes is one the standard names.
+//
+// ⛔ BOTH ADMITTED SETS ARE READ OUT OF THE VENDORED DOCUMENT. Part 1 constrains
+// an interpolation in exactly two places and they are not the same list:
+// `motionCurve` (what a temporal geometry takes, through a $ref that a walk over
+// `temporalPrimitiveGeometry` alone does not see) and `temporalPrimitiveValue`.
+// The step function is `Step` in both, and the word `Stepwise` — the older
+// MF-JSON encoding extension's spelling — appears nowhere in the document.
+func TestATSSchemaInterpolationToken(t *testing.T) {
+	raw, err := os.ReadFile(ogcBundlePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := bytes.Count(raw, []byte(`"Stepwise"`)); n != 0 {
+		t.Errorf(`the vendored document names "Stepwise" %d times; the tier writes "Step" because it named it 0`, n)
+	}
+	var doc struct {
+		Components struct {
+			Schemas struct {
+				MotionCurve struct {
+					OneOf []struct {
+						Enum []string `json:"enum"`
+					} `json:"oneOf"`
+				} `json:"motionCurve"`
+				TemporalPrimitiveValue struct {
+					Properties struct {
+						Interpolation struct {
+							Enum []string `json:"enum"`
+						} `json:"interpolation"`
+					} `json:"properties"`
+				} `json:"temporalPrimitiveValue"`
+			} `json:"schemas"`
+		} `json:"components"`
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("reading %s: %v", ogcBundlePath, err)
+	}
+	var curve []string
+	for _, b := range doc.Components.Schemas.MotionCurve.OneOf {
+		curve = append(curve, b.Enum...)
+	}
+	value := doc.Components.Schemas.TemporalPrimitiveValue.Properties.Interpolation.Enum
+	if len(curve) == 0 || len(value) == 0 {
+		t.Fatal("the vendored document declares no interpolation enum, so this test would assert nothing")
+	}
+	in := func(set []string, s string) bool {
+		for _, a := range set {
+			if a == s {
+				return true
+			}
+		}
+		return false
+	}
+	// What the tier writes: MobilityDB's own token, carried through ogcify.
+	const geometry = `{"type":"MovingPoint","interpolation":"Step"}`
+	const valueSeq = `{"interpolation":"Step","values":[1,2]}`
+	for _, c := range []struct {
+		what, doc string
+		admitted  []string
+	}{
+		{"a temporal geometry", geometry, curve},
+		{"a temporal property value", valueSeq, value},
+	} {
+		var m map[string]any
+		if err := json.Unmarshal([]byte(ogcify(c.doc)), &m); err != nil {
+			t.Fatalf("%s: ogcify produced no JSON: %v", c.what, err)
+		}
+		got, _ := m["interpolation"].(string)
+		if !in(c.admitted, got) {
+			t.Errorf("%s is written with interpolation %q, which the standard does not name; it admits %v",
+				c.what, got, c.admitted)
 		}
 	}
 }

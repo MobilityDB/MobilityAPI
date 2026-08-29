@@ -42,8 +42,18 @@ var (
 )
 
 // OGC <-> MobilityDB conventions (assessed against live MobilityDB):
-// MobilityDB rejects "Stepwise" and uses "Step"; crs is "EPSG:<n>" vs the URN.
-var ogc2mdbInterp = map[string]string{"Linear": "Linear", "Stepwise": "Step", "Discrete": "Discrete"}
+// crs is "EPSG:<n>" vs the URN.
+//
+// The step function is "Step" on both sides. OGC API - Moving Features Part 1
+// names it so in each of the two places it constrains an interpolation —
+// `motionCurve` (Discrete/Step/Linear/Quadratic/Cubic, what a temporal geometry
+// takes) and `temporalPrimitiveValue` (Discrete/Step/Linear/Regression) — and
+// the word "Stepwise" appears nowhere in that standard. "Stepwise" belongs to
+// the older MF-JSON encoding extension, and is accepted on input for a client
+// that still writes it.
+var ogc2mdbInterp = map[string]string{
+	"Linear": "Linear", "Step": "Step", "Discrete": "Discrete", "Stepwise": "Step",
+}
 var epsgName = regexp.MustCompile(`"name":\s*"EPSG:(\d+)"`)
 var epsgURN = regexp.MustCompile(`EPSG:+(\d+)`)
 
@@ -55,9 +65,10 @@ var hourOnlyOffset = regexp.MustCompile(`(\d\d:\d\d:\d\d(?:\.\d+)?)([+-]\d\d)(["
 // rfc3339Tz completes hour-only timezone offsets so datetimes are RFC 3339.
 func rfc3339Tz(s string) string { return hourOnlyOffset.ReplaceAllString(s, `$1$2:00$3`) }
 
+// ogcify turns what MobilityDB writes into what the standard names. The
+// interpolation needs nothing: MobilityDB's "Step" is already the token both
+// `motionCurve` and `temporalPrimitiveValue` enumerate.
 func ogcify(s string) string {
-	s = strings.ReplaceAll(s, `"interpolation": "Step"`, `"interpolation": "Stepwise"`)
-	s = strings.ReplaceAll(s, `"interpolation":"Step"`, `"interpolation":"Stepwise"`)
 	s = rfc3339Tz(s)
 	return epsgName.ReplaceAllString(s, `"name":"urn:ogc:def:crs:EPSG::$1"`)
 }

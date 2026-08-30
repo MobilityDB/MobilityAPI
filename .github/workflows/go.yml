@@ -43,34 +43,103 @@ jobs:
   # The Annex A tests that read or write data, against a database. The job above
   # runs the whole suite offline, where those tests skip by name; here they run.
   #
-  # The image is a RELEASED MobilityDB, not master: a conformance claim names a
-  # version somebody can install, and a claim resting on an unreleased branch names
-  # nothing a reader can obtain.
+  # ⛔ THE DATABASE IS MOBILITYDB MASTER, BUILT HERE FROM SOURCE. A job pinned to a
+  # release measures a MobilityDB the project no longer develops, so a defect fixed
+  # upstream reads here as a live one and blocks work that is not blocked — measured:
+  # deleting a temporal value that spans a whole composing sequence segfaults the
+  # backend on 1.3.0 and answers correctly on master. Naming a version somebody can
+  # install is a reason to ALSO run a release, never a reason to develop against one.
+  #
+  # ⛔ AND A PUBLISHED IMAGE IS NOT THE SOURCE. The mobilitydb/mobilitydb tags are
+  # built by MobilityDB/MobilityDB-docker, a separate repository on its own schedule,
+  # so what they carry is that repository's packaging rather than the source this
+  # tier is written against: `18-3.6-master` fails to load the library on a missing
+  # libgdal.so.39, and `17-3.5-master` exits its own entrypoint because the
+  # pointcloud extension it asks for is not available. Pinning whichever tag happens
+  # to work makes the packaging the source of truth and dates the measurement to
+  # whenever that tag was pushed. The recipe below is MobilityDB's own
+  # .github/workflows/pgversion.yml, read from the checkout under test.
   conformance:
-    name: Conformance against a released MobilityDB
-    runs-on: ubuntu-latest
-    services:
-      mobilitydb:
-        image: mobilitydb/mobilitydb:18-3.6-1.3
-        env:
-          POSTGRES_PASSWORD: conformance
-          POSTGRES_DB: mfapi
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres -d mfapi"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 20
+    name: Conformance against MobilityDB master
+    runs-on: ubuntu-24.04
     env:
+      PGVERSION: "18"
+      POSTGISVERSION: "3"
       MFAPI_DSN: postgres://postgres:conformance@127.0.0.1:5432/mfapi?sslmode=disable
     steps:
       - uses: actions/checkout@v4
+
+      - name: Check out MobilityDB master
+        uses: actions/checkout@v4
+        with:
+          repository: MobilityDB/MobilityDB
+          ref: master
+          path: mobilitydb
+
+      - name: Name the commit under test
+        run: git -C mobilitydb log -1 --format='MobilityDB master %H %s'
 
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache: true
+
+      - name: Remove the runner's PostgreSQL, so apt.postgresql.org answers
+        run: |
+          sudo service postgresql stop || true
+          sudo apt-get --purge remove postgresql* -y || true
+          sudo rm -rf /var/lib/postgresql/ /etc/postgresql/ /var/log/postgresql/ || true
+
+      # MobilityDB's own apt hardening, taken from the checkout above rather than
+      # copied: the runner image ships two package sources that answer 403 from the
+      # Azure runners, which fails an apt-get update asking only for Ubuntu packages.
+      - uses: ./mobilitydb/.github/actions/apt-resilient
+
+      - name: Add the PostgreSQL APT repository
+        run: |
+          sudo apt-get install -y curl ca-certificates gnupg
+          curl https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo apt-key add -
+          codename=$(lsb_release -cs)
+          echo "deb http://apt.postgresql.org/pub/repos/apt/ ${codename}-pgdg main ${PGVERSION}" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list
+
+      - name: Install the build and server dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgeos++-dev \
+            libproj-dev \
+            libgdal-dev \
+            libjson-c-dev \
+            postgresql-${PGVERSION} \
+            postgresql-${PGVERSION}-postgis-${POSTGISVERSION} \
+            postgresql-server-dev-${PGVERSION}
+
+      # The default family set is what this tier reads: temporal geometry points
+      # and the scalar temporal types. The optional families carry dependencies of
+      # their own and no route here reaches one, so the build stays at the defaults
+      # and the job measures the surface it uses.
+      - name: Build and install MobilityDB
+        run: |
+          export PATH=/usr/lib/postgresql/${PGVERSION}/bin:$PATH
+          mkdir mobilitydb/build
+          cd mobilitydb/build
+          cmake -DCMAKE_BUILD_TYPE=Release ..
+          make -j "$(nproc)"
+          sudo make install
+
+      # ⛔ LOADING THE EXTENSION IS THE ASSERTION THE PUBLISHED IMAGES FAILED. Doing
+      # it in a step of its own, ahead of the fixture, is what makes a database that
+      # cannot carry MobilityDB say so here rather than inside a fixture load.
+      - name: Create the database and load the extension
+        run: |
+          sudo service postgresql start
+          sudo -u postgres psql -v ON_ERROR_STOP=1 \
+            -c "ALTER USER postgres PASSWORD 'conformance'"
+          sudo -u postgres createdb mfapi
+          psql "$MFAPI_DSN" -v ON_ERROR_STOP=1 -q \
+            -c "CREATE EXTENSION mobilitydb CASCADE"
+          psql "$MFAPI_DSN" -X -A -t -c "SELECT mobilitydbFullVersion()"
 
       - name: Load the conformance fixture
         run: psql "$MFAPI_DSN" -v ON_ERROR_STOP=1 -q -f tutorial/setup/load_conformance.sql

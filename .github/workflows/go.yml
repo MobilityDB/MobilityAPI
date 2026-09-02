@@ -43,27 +43,30 @@ jobs:
       - name: Vet and build, spark backend
         run: go vet -tags spark ./... && go build -tags spark ./...
 
-      - name: Check out MobilityDB master
-        uses: actions/checkout@v4
+      # The MEOS-API catalog, derived here from MobilityDB master by the action
+      # every binding in the ecosystem uses. It is never committed: it is a
+      # derived artifact of one MobilityDB commit, and a tracked copy is drift
+      # waiting to happen.
+      - name: Derive the MEOS-API catalog
+        id: provision
+        uses: MobilityDB/MEOS-API/.github/actions/provision-meos@master
         with:
-          repository: MobilityDB/MobilityDB
-          ref: master
-          path: mobilitydb
+          mobilitydb-ref: master
 
-      # catalog_gen.go is MEOS's own table of temporal types, so it is read from
-      # the MEOS sources rather than kept by hand, and this is what makes the
-      # copy in the tree the current one. A type MEOS gains arrives here as a
-      # difference to regenerate, which is the whole reason the table is
+      # catalog_gen.go is the catalog's temporal-type registry projected into
+      # Go, so it is generated rather than kept by hand, and this is what makes
+      # the copy in the tree the current one. A type MEOS gains arrives here as
+      # a difference to regenerate, which is the whole reason the table is
       # generated: a hand-kept copy goes stale in silence instead.
-      - name: The generated catalog is what MEOS declares
+      - name: The generated table is what the catalog declares
         run: |
-          go run ./tools/codegen -mobilitydb mobilitydb -o catalog_gen.go
+          go run ./tools/codegen -catalog "${{ steps.provision.outputs.catalog-path }}" -o catalog_gen.go
           if ! git diff --quiet -- catalog_gen.go; then
-            echo "::error::catalog_gen.go is not what MEOS declares. Regenerate it: go run ./tools/codegen -mobilitydb <a MobilityDB checkout> -o catalog_gen.go"
+            echo "::error::catalog_gen.go is not what the catalog declares. Regenerate it: go run ./tools/codegen -catalog <meos-idl.json> -o catalog_gen.go"
             git diff -- catalog_gen.go
             exit 1
           fi
-          echo "the committed catalog is what MobilityDB master declares"
+          echo "the committed table is what the catalog of MobilityDB master declares"
 
   # EVERY TEST THIS REPOSITORY CARRIES RUNS HERE, AND NONE OF THEM SKIPS.
   # A test skips when a precondition is missing from the job that collects it,

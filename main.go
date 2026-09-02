@@ -25,6 +25,7 @@ import (
 	"os"
 	"os/signal"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -765,21 +766,119 @@ func conformantForm(uom string) bool {
 // assumes when the body omits one.
 type tType struct{ mf, col, cast, ogc, defInterp string }
 
-// tPropType resolves an OGC temporal property type token to the four scalar
-// temporal types MobilityDB carries as time-varying attribute values.
-func tPropType(t string) (tType, bool) {
-	switch strings.ToLower(strings.TrimSpace(t)) {
-	case "", "treal", "tfloat", "measure", "real", "float", "double", "number":
-		return tType{"MovingFloat", "vfloat", "tfloat", "TReal", "Linear"}, true
-	case "tint", "tinteger", "integer", "int":
-		return tType{"MovingInteger", "vint", "tint", "TInteger", "Step"}, true
-	case "ttext", "tstring", "text", "string":
-		return tType{"MovingText", "vtext", "ttext", "TText", "Discrete"}, true
-	case "tbool", "tboolean", "boolean", "bool":
-		return tType{"MovingBoolean", "vbool", "tbool", "TBoolean", "Step"}, true
-	}
-	return tType{}, false
+// ogcScalar is the OGC vocabulary for a base type: the temporal property type
+// token Part 1 defines for it, and the interpolation this tier assumes when a
+// request body names none. Part 1 defines four tokens and no more, so a
+// temporal type over any other base carries no OGC temporal-property form,
+// which is why this is keyed by base type rather than listing temporal types:
+// every temporal type MEOS builds over one of these bases is carried, and one
+// it adds over a fifth base is a question for the standard, not a line here.
+var ogcScalar = map[string]struct{ token, defInterp string }{
+	"bool":   {"TBoolean", "Step"},
+	"int4":   {"TInteger", "Step"},
+	"int8":   {"TInteger", "Step"},
+	"float8": {"TReal", "Linear"},
+	"text":   {"TText", "Discrete"},
 }
+
+// tPropAlias resolves the spellings a request may use for a temporal property
+// type to the MEOS type name. The OGC token and the MEOS name are accepted for
+// every type through the table below; these are the further spellings the tier
+// answers to, and the empty string is the default a body without a type gets.
+var tPropAlias = map[string]string{
+	"":        "tfloat",
+	"measure": "tfloat",
+	"real":    "tfloat",
+	"float":   "tfloat",
+	"double":  "tfloat",
+	"number":  "tfloat",
+	"integer": "tint",
+	"int":     "tint",
+	"bigint":  "tbigint",
+	"long":    "tbigint",
+	"tstring": "ttext",
+	"text":    "ttext",
+	"string":  "ttext",
+	"boolean": "tbool",
+	"bool":    "tbool",
+}
+
+// tPropType resolves a temporal property type token to the scalar temporal
+// type MobilityDB carries it as. A token is the OGC name, the MEOS name, or
+// one of the aliases above, in any case.
+func tPropType(t string) (tType, bool) {
+	tt, ok := tPropTokens[strings.ToLower(strings.TrimSpace(t))]
+	return tt, ok
+}
+
+// ogcCanonical names the type an OGC token resolves to where several carry it.
+// Part 1's TInteger is a 32-bit integer, so it names tint; tbigint is the wider
+// type MobilityDB adds over the same token, and a request naming TInteger asks
+// for the narrower one. A token exactly one type carries needs no entry.
+var ogcCanonical = map[string]string{
+	"TInteger": "tint",
+}
+
+// tPropTokens is every token tPropType answers to. Each scalar type answers to
+// its MEOS name and to the OGC token, both lowercased, and the aliases add the
+// spellings a client may send instead. A token two types carry resolves through
+// ogcCanonical, never through whichever the map happened to yield last.
+var tPropTokens = func() map[string]tType {
+	byToken := map[string][]string{}
+	m := map[string]tType{}
+	for name, tt := range scalarTemporalTypes {
+		m[name] = tt
+		byToken[tt.ogc] = append(byToken[tt.ogc], name)
+	}
+	for token, carriers := range byToken {
+		owner := ""
+		switch {
+		case len(carriers) == 1:
+			owner = carriers[0]
+		default:
+			owner = ogcCanonical[token]
+		}
+		if tt, ok := scalarTemporalTypes[owner]; ok {
+			m[strings.ToLower(token)] = tt
+		}
+	}
+	for alias, name := range tPropAlias {
+		if tt, ok := scalarTemporalTypes[name]; ok {
+			m[alias] = tt
+		}
+	}
+	return m
+}()
+
+// scalarTemporalTypes is every MEOS temporal type this tier can carry as an
+// OGC temporal property, projected from the generated catalog: not spatial, an
+// MF-JSON form to write, and a base type Part 1 gives a token to. The storage
+// column is the type's own name with the leading t as a v, so a type MEOS adds
+// needs a column of that name and nothing else.
+var scalarTemporalTypes = func() map[string]tType {
+	m := map[string]tType{}
+	for _, t := range temporalTypes {
+		if t.Spatial || t.MFJSON == "" {
+			continue
+		}
+		b, ok := ogcScalar[t.Base]
+		if !ok {
+			continue
+		}
+		m[t.Name] = tType{
+			mf:        t.MFJSON,
+			col:       tPropColumn(t.Name),
+			cast:      t.Name,
+			ogc:       b.token,
+			defInterp: b.defInterp,
+		}
+	}
+	return m
+}()
+
+// tPropColumn is the column mf_tproperty holds a temporal type in: its name
+// with a v where the leading t stands, so tfloat is vfloat.
+func tPropColumn(name string) string { return "v" + strings.TrimPrefix(name, "t") }
 
 // orTrue returns the JSON boolean v, or true when v is absent — MF-JSON sequence
 // bounds default to inclusive.
@@ -846,12 +945,47 @@ func tPropMFJSON(mfType, defInterp string, body map[string]any) (string, error) 
 func ensureTPropTable(ctx context.Context, q interface {
 	Exec(context.Context, string, ...any) (int64, error)
 }) error {
-	_, err := q.Exec(ctx, `CREATE TABLE IF NOT EXISTS mf_tproperty (
+	if _, err := q.Exec(ctx, `CREATE TABLE IF NOT EXISTS mf_tproperty (
 	  cid text NOT NULL, fid bigint NOT NULL, name text NOT NULL,
 	  ptype text NOT NULL, uom text, description text,
-	  vfloat tfloat, vint tint, vtext ttext, vbool tbool,
-	  PRIMARY KEY (cid, fid, name))`)
-	return err
+	  `+tPropValueColumns()+`,
+	  PRIMARY KEY (cid, fid, name))`); err != nil {
+		return err
+	}
+	// A store created before MEOS carried one of these types has the other
+	// columns and not that one, and CREATE TABLE IF NOT EXISTS leaves such a
+	// table as it stands.
+	for _, col := range tPropValueColumnNames() {
+		if _, err := q.Exec(ctx, "ALTER TABLE mf_tproperty ADD COLUMN IF NOT EXISTS "+col.name+" "+col.typ); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// tPropValueColumnNames is one column per scalar temporal type, ordered by
+// type name so the DDL a run writes does not depend on map iteration.
+func tPropValueColumnNames() []struct{ name, typ string } {
+	names := make([]string, 0, len(scalarTemporalTypes))
+	for name := range scalarTemporalTypes {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	cols := make([]struct{ name, typ string }, 0, len(names))
+	for _, name := range names {
+		cols = append(cols, struct{ name, typ string }{scalarTemporalTypes[name].col, name})
+	}
+	return cols
+}
+
+// tPropValueColumns is those columns as one DDL fragment.
+func tPropValueColumns() string {
+	cols := tPropValueColumnNames()
+	parts := make([]string, len(cols))
+	for i, c := range cols {
+		parts[i] = c.name + " " + c.typ
+	}
+	return strings.Join(parts, ", ")
 }
 
 // clip wraps a temporal expression with atTime for the OGC leaf (instant set)

@@ -19,8 +19,7 @@
 package main
 
 /*
-#cgo CFLAGS: -I/usr/local/include
-#cgo LDFLAGS: -lmeos
+#cgo pkg-config: meos
 #include <stdlib.h>
 #include <meos.h>
 */

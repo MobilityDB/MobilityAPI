@@ -154,32 +154,73 @@ jobs:
             libproj-dev \
             libgdal-dev \
             libjson-c-dev \
+            libxml2-dev \
+            zlib1g-dev \
+            autoconf automake libtool \
             postgresql-${PGVERSION} \
             postgresql-${PGVERSION}-postgis-${POSTGISVERSION} \
             postgresql-server-dev-${PGVERSION}
 
-      # The default family set is what this tier reads: temporal geometry points
-      # and the scalar temporal types. The optional families carry dependencies of
-      # their own and no route here reaches one, so the build stays at the defaults
-      # and the job measures the surface it uses.
+      # WHAT ALL=ON REQUIRES, which is what lets the builds below ask for every
+      # family. libh3 is the H3 family's library, and the vendored pgPointCloud
+      # that POINTCLOUD compiles needs the autotools with libxml2 and zlib
+      # installed above. The h3 and pointcloud PostgreSQL EXTENSIONS are a
+      # separate need: MobilityDB's control file requires them when their family
+      # is on, so CREATE EXTENSION pulls them in and they must exist in the
+      # cluster. apt.postgresql.org carries both for PostgreSQL 16 to 18.
+      - name: Install what the optional families require
+        run: |
+          sudo apt-get install -y libh3-dev \
+            postgresql-${PGVERSION}-pointcloud \
+            postgresql-${PGVERSION}-h3
+
+      # The pgdg libh3-dev package layout differs between releases, so the
+      # header and the library are located on disk and pinned rather than left
+      # to CMake's find_path and find_library defaults. This is MobilityDB's own
+      # step, from its .github/workflows/pgversion.yml.
+      - name: Locate libh3 on disk and pin its paths
+        run: |
+          H3_INC=$(dpkg -L libh3-dev | grep -E 'h3api\.h$' | head -1)
+          H3_LIB=$(dpkg -L libh3-dev libh3-1 2>/dev/null | grep -E 'libh3\.so$' | head -1)
+          if [ -z "$H3_INC" ] || [ -z "$H3_LIB" ]; then
+            find /usr -name 'h3api.h' 2>/dev/null
+            find /usr -name 'libh3*' 2>/dev/null
+            echo "::error::could not locate libh3 headers/library"
+            exit 1
+          fi
+          echo "H3_INCLUDE_DIR=$(dirname "$H3_INC")" >> $GITHUB_ENV
+          echo "H3_LIBRARY=$H3_LIB" >> $GITHUB_ENV
+
+      # ALL FAMILIES. A family left out is stripped at preprocess time, so this
+      # job would report on a smaller MobilityDB than the one it names. The tier
+      # generates its temporal type table from a catalog that covers every
+      # family, and a database narrower than that catalog cannot answer for the
+      # types the tier declares it knows. -DALL=ON also covers a family added
+      # later, which a list of names written here would not.
       - name: Build and install MobilityDB
         run: |
           export PATH=/usr/lib/postgresql/${PGVERSION}/bin:$PATH
           mkdir mobilitydb/build
           cd mobilitydb/build
-          cmake -DCMAKE_BUILD_TYPE=Release ..
+          cmake -DCMAKE_BUILD_TYPE=Release -DALL=ON \
+            -DH3_INCLUDE_DIR="$H3_INCLUDE_DIR" -DH3_LIBRARY="$H3_LIBRARY" ..
           make -j "$(nproc)"
           sudo make install
 
       # The same source, configured as the standalone library the streaming
       # engine links. Building it from the checkout above is what makes the
       # engine tests measure the same MobilityDB the SQL routes measure; a
-      # libmeos from anywhere else would be a second, unnamed commit.
+      # libmeos from anywhere else would be a second, unnamed commit. Every
+      # family here too, which is what every other consumer of MEOS builds: the
+      # provision-meos action this repository uses for the catalog defaults to
+      # -DALL=ON. A standalone library needs no PostgreSQL extension for any of
+      # them, since the vendored pgPointCloud sources compile into it.
       - name: Build and install libmeos from the same checkout
         run: |
           mkdir mobilitydb/build-meos
           cd mobilitydb/build-meos
-          cmake -DMEOS=ON -DCMAKE_BUILD_TYPE=Release ..
+          cmake -DMEOS=ON -DALL=ON -DCMAKE_BUILD_TYPE=Release \
+            -DH3_INCLUDE_DIR="$H3_INCLUDE_DIR" -DH3_LIBRARY="$H3_LIBRARY" ..
           make -j "$(nproc)"
           sudo make install
           sudo ldconfig

@@ -60,3 +60,50 @@ var temporalTypeByName = func() map[string]*TemporalType {
 	}
 	return m
 }()
+
+// MathOp is one MEOS function that takes a temporal number and answers one.
+// SQLName is the name the operation carries on every engine, Symbol the MEOS C
+// symbol behind it, and Arg the C type of its one further parameter, empty when
+// it takes none.
+type MathOp struct {
+	SQLName string
+	Symbol  string
+	Arg     string
+}
+
+// mathOps is every such function the catalog states, ordered by SQL name.
+var mathOps = []MathOp{
+	{SQLName: "abs", Symbol: "tnumber_abs", Arg: ""},
+	{SQLName: "angularDifference", Symbol: "tnumber_angular_difference", Arg: ""},
+	{SQLName: "ceil", Symbol: "tfloat_ceil", Arg: ""},
+	{SQLName: "cos", Symbol: "tfloat_cos", Arg: ""},
+	{SQLName: "degrees", Symbol: "tfloat_degrees", Arg: "bool"},
+	{SQLName: "derivative", Symbol: "temporal_derivative", Arg: ""},
+	{SQLName: "exp", Symbol: "tfloat_exp", Arg: ""},
+	{SQLName: "floor", Symbol: "tfloat_floor", Arg: ""},
+	{SQLName: "ln", Symbol: "tfloat_ln", Arg: ""},
+	{SQLName: "log10", Symbol: "tfloat_log10", Arg: ""},
+	{SQLName: "radians", Symbol: "tfloat_radians", Arg: ""},
+	{SQLName: "round", Symbol: "temporal_round", Arg: "int"},
+	{SQLName: "scaleTime", Symbol: "temporal_scale_time", Arg: "const Interval *"},
+	{SQLName: "setInterp", Symbol: "temporal_set_interp", Arg: "interpType"},
+	{SQLName: "shiftTime", Symbol: "temporal_shift_time", Arg: "const Interval *"},
+	{SQLName: "sin", Symbol: "tfloat_sin", Arg: ""},
+	{SQLName: "tAdd", Symbol: "add_tfloat_float", Arg: "double"},
+	{SQLName: "tDiv", Symbol: "div_tfloat_float", Arg: "double"},
+	{SQLName: "tMul", Symbol: "mul_tfloat_float", Arg: "double"},
+	{SQLName: "tSub", Symbol: "sub_tfloat_float", Arg: "double"},
+	{SQLName: "tan", Symbol: "tfloat_tan", Arg: ""},
+	{SQLName: "trend", Symbol: "tnumber_trend", Arg: ""},
+}
+
+// mathOpBySQLName indexes mathOps by the SQL name. A name several functions
+// carry keeps them all, so a caller resolves it rather than reading whichever
+// entry a map happened to hold.
+var mathOpBySQLName = func() map[string][]*MathOp {
+	m := map[string][]*MathOp{}
+	for i := range mathOps {
+		m[mathOps[i].SQLName] = append(m[mathOps[i].SQLName], &mathOps[i])
+	}
+	return m
+}()

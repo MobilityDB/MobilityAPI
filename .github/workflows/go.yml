@@ -60,13 +60,14 @@ jobs:
       # generated: a hand-kept copy goes stale in silence instead.
       - name: The generated table is what the catalog declares
         run: |
-          go run ./tools/codegen -catalog "${{ steps.provision.outputs.catalog-path }}" -o catalog_gen.go
-          if ! git diff --quiet -- catalog_gen.go; then
-            echo "::error::catalog_gen.go is not what the catalog declares. Regenerate it: go run ./tools/codegen -catalog <meos-idl.json> -o catalog_gen.go"
-            git diff -- catalog_gen.go
+          go run ./tools/codegen -catalog "${{ steps.provision.outputs.catalog-path }}" \
+            -o catalog_gen.go -o-meos mathops_meos_gen.go
+          if ! git diff --quiet -- catalog_gen.go mathops_meos_gen.go; then
+            echo "::error::the generated files are not what the catalog declares. Regenerate them: go run ./tools/codegen -catalog <meos-idl.json>"
+            git diff -- catalog_gen.go mathops_meos_gen.go
             exit 1
           fi
-          echo "the committed table is what the catalog of MobilityDB master declares"
+          echo "the committed tables are what the catalog of MobilityDB master declares"
 
   # EVERY TEST THIS REPOSITORY CARRIES RUNS HERE, AND NONE OF THEM SKIPS.
   # A test skips when a precondition is missing from the job that collects it,
@@ -102,12 +103,12 @@ jobs:
       # The vendored OGC schema bundle is compared against what OGC publishes.
       MFAPI_SCHEMA_FRESHNESS: "1"
       # The floor is every result line `go test -v` writes, subtests included:
-      # 84 top-level tests and 64 subtests. Subtests belong in it because a
+      # 86 top-level tests and 64 subtests. Subtests belong in it because a
       # t.Run whose body skips is as unrun as its parent would be, and deleting
       # a case from a table-driven test moves nothing else. Raise it when the
       # suite grows. Lowering it belongs in the same commit as the removal it
       # accounts for, because deleting a test is what a skip refusal cannot see.
-      MFAPI_TEST_FLOOR: "148"
+      MFAPI_TEST_FLOOR: "150"
     steps:
       - uses: actions/checkout@v4
 

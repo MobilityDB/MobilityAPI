@@ -157,3 +157,61 @@ func TestValueColumnsAreOnePerScalarType(t *testing.T) {
 		t.Errorf("the value columns are not in a stable order: %v", names)
 	}
 }
+
+// Every operation the streaming tier lifts must be one the catalog states, with
+// the shape the entry claims. A MEOS rename, a removal or a changed parameter
+// then fails the build rather than a request at run time.
+func TestEveryLiftedOpIsInTheCatalog(t *testing.T) {
+	for name, info := range liftedOps {
+		if info.sqlName == "" {
+			t.Errorf("the lifted operation %q names no SQL function", name)
+			continue
+		}
+		ops := mathOpBySQLName[info.sqlName]
+		if len(ops) == 0 {
+			t.Errorf("the lifted operation %q names the SQL function %q, which the catalog does not state over a temporal number", name, info.sqlName)
+			continue
+		}
+		if len(ops) > 1 {
+			var syms []string
+			for _, op := range ops {
+				syms = append(syms, op.Symbol)
+			}
+			sort.Strings(syms)
+			t.Errorf("the SQL name %q is carried by %v, so it does not name one operation", info.sqlName, syms)
+			continue
+		}
+		// The query supplies the further parameter exactly when the catalog
+		// gives it as a double. Where the catalog gives another type, as it
+		// does for the degrees normalisation flag, the tier passes a constant
+		// and the query supplies nothing.
+		if want := ops[0].Arg == "double"; info.needsArg != want {
+			t.Errorf("the lifted operation %q takes an argument from the query = %t, and the catalog gives %s a parameter of %q",
+				name, info.needsArg, ops[0].Symbol, ops[0].Arg)
+		}
+	}
+}
+
+// The catalog states more operations over a temporal number than the tier
+// lifts, and that is the point of holding the two apart: the ones left out are
+// left out for a reason a reader can check.
+func TestTheCatalogStatesMoreThanTheTierLifts(t *testing.T) {
+	if len(mathOps) < len(liftedOps) {
+		t.Fatalf("the catalog states %d operations and the tier lifts %d, so the tier lifts one the catalog does not", len(mathOps), len(liftedOps))
+	}
+	lifted := map[string]bool{}
+	for _, info := range liftedOps {
+		lifted[info.sqlName] = true
+	}
+	// These three transform a temporal number's values by walking its segments,
+	// so on a stream record, which is one instant, they have no neighbour to
+	// read. They are in the catalog and must stay out of the lifted set.
+	for _, name := range []string{"derivative", "trend", "angularDifference"} {
+		if len(mathOpBySQLName[name]) == 0 {
+			t.Errorf("the catalog no longer states %q, so this test no longer measures anything", name)
+		}
+		if lifted[name] {
+			t.Errorf("%q is lifted, and its value at an instant is not a function of the value at that instant", name)
+		}
+	}
+}

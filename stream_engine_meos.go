@@ -291,40 +291,13 @@ func liftInstant(op string, arg float64, in Instant) (Instant, error) {
 	}
 	defer C.free(unsafe.Pointer(temp))
 
-	var res *C.Temporal
-	switch op {
-	case "ln":
-		res = C.tfloat_ln(temp)
-	case "exp":
-		res = C.tfloat_exp(temp)
-	case "log10":
-		res = C.tfloat_log10(temp)
-	case "ceil":
-		res = C.tfloat_ceil(temp)
-	case "floor":
-		res = C.tfloat_floor(temp)
-	case "abs":
-		res = C.tnumber_abs(temp)
-	case "degrees":
-		res = C.tfloat_degrees(temp, false)
-	case "radians":
-		res = C.tfloat_radians(temp)
-	case "sin":
-		res = C.tfloat_sin(temp)
-	case "cos":
-		res = C.tfloat_cos(temp)
-	case "tan":
-		res = C.tfloat_tan(temp)
-	case "add":
-		res = C.add_tfloat_float(temp, C.double(arg))
-	case "sub":
-		res = C.sub_tfloat_float(temp, C.double(arg))
-	case "mul":
-		res = C.mul_tfloat_float(temp, C.double(arg))
-	case "div":
-		res = C.div_tfloat_float(temp, C.double(arg))
-	default:
+	info, lifted := liftedOps[op]
+	if !lifted {
 		return Instant{}, fmt.Errorf("unknown operation %q", op)
+	}
+	res, served := callMathOp(info.sqlName, temp, arg)
+	if !served {
+		return Instant{}, fmt.Errorf("the operation %q names the MEOS function %q, which this build does not call", op, info.sqlName)
 	}
 	if res == nil {
 		return Instant{}, fmt.Errorf("operation %q produced no result (domain error?)", op)

@@ -40,6 +40,20 @@ func TestMeosTransform(t *testing.T) {
 		{"cos", 0, 0, 1},
 		{"tan", 0, math.Pi / 4, 1},
 	}
+	// Every lifted operation is measured here, and that is what makes this an
+	// equivalence check rather than a sample: the dispatch it exercises names
+	// the MEOS symbol per operation, so an operation nobody measures could call
+	// the wrong one and still pass.
+	covered := map[string]bool{}
+	for _, c := range cases {
+		covered[c.op] = true
+	}
+	for op := range liftedOps {
+		if !covered[op] {
+			t.Errorf("the lifted operation %q is not measured here, so nothing checks which MEOS function it calls", op)
+		}
+	}
+
 	for _, c := range cases {
 		ctx, cancel := context.WithCancel(context.Background())
 		src := make(chan Instant, 1)

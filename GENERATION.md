@@ -1,9 +1,9 @@
 # Generation
 
 MobilityAPI is a tier over MEOS, so what it knows about MEOS is generated from
-MEOS rather than kept by hand. The generator lives in `tools/codegen`, its
-output is committed, and CI regenerates it against MobilityDB master and
-refuses a difference.
+the MEOS-API catalog rather than kept by hand. The generator lives in
+`tools/codegen`, its output is committed, and CI derives the catalog from
+MobilityDB master, regenerates against it, and refuses a difference.
 
 ## What is generated
 
@@ -11,16 +11,19 @@ refuses a difference.
 its base type, its bounding box, the token `asMFJSON` writes for it, whether it
 is spatial, whether it is a number, and whether MEOS interpolates it linearly.
 
-Run it against any MobilityDB checkout:
+Run it against a catalog:
 
 ```bash
-go run ./tools/codegen -mobilitydb <checkout> -o catalog_gen.go
+go run ./tools/codegen -catalog <meos-idl.json> -o catalog_gen.go
 ```
 
 ## Where the facts come from
 
-The generator reads the MEOS sources that define them, in the checkout it is
-pointed at:
+`meos-idl.json` is the machine-readable description of the MEOS C library that
+[MEOS-API](https://github.com/MobilityDB/MEOS-API) derives from the MEOS
+headers and sources, and that every binding in the ecosystem generates from.
+This tier reads one registry of it, `temporalTypes`, which MEOS-API in turn
+reads from:
 
 | source | what is read |
 | --- | --- |
@@ -32,10 +35,11 @@ and the empty token in the table says so. That is how `tdouble2`, `tdouble3`
 and `tdouble4`, which exist for temporal aggregation, stay off every surface
 without a list here naming them.
 
-The sources are read by anchoring on a definition and counting braces, never by
-matching a pattern across a span, and string literals are stepped over so the
-`{` inside `{\"type\":\"MovingFloat\",` is read as text rather than as
-structure.
+The catalog is a derived artifact of one MobilityDB commit, so it is never
+committed. CI derives it with
+`MobilityDB/MEOS-API/.github/actions/provision-meos@master`, the action every
+catalog-consuming binding uses, and passes the path it reports to the
+generator.
 
 ## What the tier adds, and what holds it complete
 
@@ -58,13 +62,11 @@ store's value columns are one per scalar type. A temporal type MEOS adds over
 one of the standard's bases therefore arrives as a failing test rather than as
 a request the tier rejects at run time.
 
-## The catalog this could read instead
+## Why the catalog and not the C
 
-`MobilityDB/MEOS-API` publishes `meos-idl.json`, the machine-readable catalog
-every language binding generates from, and reading it here rather than the C
-sources would put this tier on the same footing as the bindings. Two of the
-facts above are not in that catalog today: the MF-JSON type token has no field,
-and `typeRelations.byBase` holds one temporal type per base, so it carries
-`trgeometry` for the base `pose` and drops `tpose`, which shares that base.
-Both are single-source facts in `meos_catalog.c` and `type_out.c`, which is
-what the generator reads until the catalog states them.
+Reading MEOS's C directly would work, and it is what this generator did before
+the catalog stated the MF-JSON type token and named every temporal type a base
+carries. It is the wrong place to read from: it gives this tier a parse of
+someone else's C to keep working, and it puts the tier on a different footing
+from PyMEOS, JMEOS and the rest, which all project the catalog. One source of
+truth, read one way, is the whole point of the catalog existing.

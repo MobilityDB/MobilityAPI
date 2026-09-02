@@ -76,11 +76,13 @@ jobs:
       MFAPI_DSN: postgres://postgres:conformance@127.0.0.1:5432/mfapi?sslmode=disable
       # The vendored OGC schema bundle is compared against what OGC publishes.
       MFAPI_SCHEMA_FRESHNESS: "1"
-      # The floor is the number of top-level tests the tree declares under the
-      # meos tag: `grep -h '^func Test' *_test.go | wc -l`. Raise it when the
+      # The floor is every result line `go test -v` writes, subtests included:
+      # 77 top-level tests and 64 subtests. Subtests belong in it because a
+      # t.Run whose body skips is as unrun as its parent would be, and deleting
+      # a case from a table-driven test moves nothing else. Raise it when the
       # suite grows. Lowering it belongs in the same commit as the removal it
       # accounts for, because deleting a test is what a skip refusal cannot see.
-      MFAPI_TEST_FLOOR: "77"
+      MFAPI_TEST_FLOOR: "141"
     steps:
       - uses: actions/checkout@v4
 
@@ -184,23 +186,18 @@ jobs:
       # Two rules, because each is blind to what the other catches. The first
       # refuses a test that reported itself unrun; once that stands, deleting a
       # test is the remaining way to stop running it, and it leaves no skip
-      # behind, so only the total moves. Subtests count in both: a t.Run whose
-      # body skips is as unrun as its parent would be.
+      # behind, so only the total moves.
+      #
+      # The rules live once, in MEOS-API beside the catalog, and every consumer
+      # in the ecosystem reads that one definition rather than a copy of it: a
+      # copy is what drifts, and a rule about coverage that drifts is worse than
+      # none. The same script answers over a local log, so a by-hand answer and
+      # the CI answer cannot differ.
       - name: Refuse a skip, and a suite that shrank
-        run: |
-          skipped=$(grep -cE '^ *--- SKIP' suite.log || true)
-          if [ "$skipped" -ne 0 ]; then
-            echo "::error::${skipped} test(s) reported themselves skipped; every precondition is supplied in this job, so a skip is a defect"
-            grep -E '^ *--- SKIP' suite.log
-            exit 1
-          fi
-          ran=$(grep -cE '^--- PASS' suite.log || true)
-          if [ "$ran" -lt "$MFAPI_TEST_FLOOR" ]; then
-            echo "::error::${ran} top-level tests ran, below the floor of ${MFAPI_TEST_FLOOR}; a test has been excluded, filtered, renamed out of Test* or deleted"
-            exit 1
-          fi
-          subtests=$(grep -cE '^ +--- PASS' suite.log || true)
-          echo "${ran} top-level tests and ${subtests} subtests ran, none skipped"
+        uses: MobilityDB/MEOS-API/.github/actions/check-test-outcome@master
+        with:
+          log: suite.log
+          min-tests: ${{ env.MFAPI_TEST_FLOOR }}
 
       # A SAMPLE THAT HAS DRIFTED IS WORSE THAN NO SAMPLE: it states what the
       # service used to answer, and a reader has no way to tell. Re-emitting here

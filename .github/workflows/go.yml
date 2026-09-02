@@ -43,6 +43,28 @@ jobs:
       - name: Vet and build, spark backend
         run: go vet -tags spark ./... && go build -tags spark ./...
 
+      - name: Check out MobilityDB master
+        uses: actions/checkout@v4
+        with:
+          repository: MobilityDB/MobilityDB
+          ref: master
+          path: mobilitydb
+
+      # catalog_gen.go is MEOS's own table of temporal types, so it is read from
+      # the MEOS sources rather than kept by hand, and this is what makes the
+      # copy in the tree the current one. A type MEOS gains arrives here as a
+      # difference to regenerate, which is the whole reason the table is
+      # generated: a hand-kept copy goes stale in silence instead.
+      - name: The generated catalog is what MEOS declares
+        run: |
+          go run ./tools/codegen -mobilitydb mobilitydb -o catalog_gen.go
+          if ! git diff --quiet -- catalog_gen.go; then
+            echo "::error::catalog_gen.go is not what MEOS declares. Regenerate it: go run ./tools/codegen -mobilitydb <a MobilityDB checkout> -o catalog_gen.go"
+            git diff -- catalog_gen.go
+            exit 1
+          fi
+          echo "the committed catalog is what MobilityDB master declares"
+
   # EVERY TEST THIS REPOSITORY CARRIES RUNS HERE, AND NONE OF THEM SKIPS.
   # A test skips when a precondition is missing from the job that collects it,
   # so this job supplies all three: the fixture database the Annex A data tests
@@ -77,12 +99,12 @@ jobs:
       # The vendored OGC schema bundle is compared against what OGC publishes.
       MFAPI_SCHEMA_FRESHNESS: "1"
       # The floor is every result line `go test -v` writes, subtests included:
-      # 77 top-level tests and 64 subtests. Subtests belong in it because a
+      # 84 top-level tests and 64 subtests. Subtests belong in it because a
       # t.Run whose body skips is as unrun as its parent would be, and deleting
       # a case from a table-driven test moves nothing else. Raise it when the
       # suite grows. Lowering it belongs in the same commit as the removal it
       # accounts for, because deleting a test is what a skip refusal cannot see.
-      MFAPI_TEST_FLOOR: "141"
+      MFAPI_TEST_FLOOR: "148"
     steps:
       - uses: actions/checkout@v4
 

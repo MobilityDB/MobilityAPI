@@ -45,6 +45,10 @@ in-process engine live in one tier (each named cluster engine still requires its
   MFAPI_DSN=<dsn> LD_LIBRARY_PATH=/usr/local/lib ./mfapi
   ```
 
+  The build reads MEOS's own `meos.pc`, so a libmeos installed somewhere other
+  than `/usr/local` is named once, by pointing `PKG_CONFIG_PATH` at the
+  prefix's `lib/pkgconfig` and `LD_LIBRARY_PATH` at its `lib`.
+
   The default (cgo-free) build serves every other endpoint but reports the
   streaming engine as not built (`501`). Point the notebook at another host with
   the `MFAPI_HOST` environment variable.

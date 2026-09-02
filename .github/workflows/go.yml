@@ -7,8 +7,12 @@ on:
     branches: [master]
 
 jobs:
+  # Everything that needs no database and no library: the formatting, and that
+  # every build tag combination compiles and vets. No test runs here, because a
+  # test collected without the database it reads can only skip, and a skip is a
+  # test nobody has run reported inside a green job.
   build:
-    name: Build and test
+    name: Build and vet, every tag
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -25,32 +29,36 @@ jobs:
             echo "gofmt reports:"; echo "$unformatted"; exit 1
           fi
 
-      - name: Vet
-        run: go vet ./...
+      # A file behind a build tag no job ever passes is invisible to every check
+      # the repository has: it is not compiled, so it is not vetted, and it
+      # carries no test a count could miss. Compiling each tag set here is what
+      # keeps backend_duck.go and backend_spark.go from rotting; the meos tag
+      # needs the library and is compiled in the job below, which builds it.
+      - name: Vet and build, default tags
+        run: go vet ./... && go build ./...
 
-      - name: Build
-        run: go build ./...
+      - name: Vet and build, duckdb backend
+        run: go vet -tags duckdb ./... && go build -tags duckdb ./...
 
-      # The default build links no MEOS, so this is the control plane, the OGC
-      # Part 1 abstract test suite and the streaming catalogue. The meos-tagged
-      # engine tests need libmeos on the link path and run where it is present.
-      - name: Test
-        run: go test ./...
+      - name: Vet and build, spark backend
+        run: go vet -tags spark ./... && go build -tags spark ./...
 
-      - name: Conformance report
-        run: go test -run TestATSCoverageReport -v .
-
-  # The Annex A tests that read or write data, against a database. The job above
-  # runs the whole suite offline, where those tests skip by name; here they run.
+  # EVERY TEST THIS REPOSITORY CARRIES RUNS HERE, AND NONE OF THEM SKIPS.
+  # A test skips when a precondition is missing from the job that collects it,
+  # so this job supplies all three: the fixture database the Annex A data tests
+  # read, the libmeos the streaming engine links, and the network the published
+  # OGC schemas are fetched over. It then refuses a skip outright, so a
+  # precondition that stops being supplied fails the job instead of decaying
+  # into a green run that exercised nothing.
   #
-  # ⛔ THE DATABASE IS MOBILITYDB MASTER, BUILT HERE FROM SOURCE. A job pinned to a
+  # THE DATABASE IS MOBILITYDB MASTER, BUILT HERE FROM SOURCE. A job pinned to a
   # release measures a MobilityDB the project no longer develops, so a defect fixed
-  # upstream reads here as a live one and blocks work that is not blocked — measured:
-  # deleting a temporal value that spans a whole composing sequence segfaults the
-  # backend on 1.3.0 and answers correctly on master. Naming a version somebody can
-  # install is a reason to ALSO run a release, never a reason to develop against one.
+  # upstream reads here as a live one and blocks work that is not blocked: deleting
+  # a temporal value that spans a whole composing sequence segfaults the backend on
+  # 1.3.0 and answers correctly on master. Naming a version somebody can install is
+  # a reason to ALSO run a release, never a reason to develop against one.
   #
-  # ⛔ AND A PUBLISHED IMAGE IS NOT THE SOURCE. The mobilitydb/mobilitydb tags are
+  # AND A PUBLISHED IMAGE IS NOT THE SOURCE. The mobilitydb/mobilitydb tags are
   # built by MobilityDB/MobilityDB-docker, a separate repository on its own schedule,
   # so what they carry is that repository's packaging rather than the source this
   # tier is written against: `18-3.6-master` fails to load the library on a missing
@@ -60,12 +68,19 @@ jobs:
   # whenever that tag was pushed. The recipe below is MobilityDB's own
   # .github/workflows/pgversion.yml, read from the checkout under test.
   conformance:
-    name: Conformance against MobilityDB master
+    name: Every test, against MobilityDB master
     runs-on: ubuntu-24.04
     env:
       PGVERSION: "18"
       POSTGISVERSION: "3"
       MFAPI_DSN: postgres://postgres:conformance@127.0.0.1:5432/mfapi?sslmode=disable
+      # The vendored OGC schema bundle is compared against what OGC publishes.
+      MFAPI_SCHEMA_FRESHNESS: "1"
+      # The floor is the number of top-level tests the tree declares under the
+      # meos tag: `grep -h '^func Test' *_test.go | wc -l`. Raise it when the
+      # suite grows. Lowering it belongs in the same commit as the removal it
+      # accounts for, because deleting a test is what a skip refusal cannot see.
+      MFAPI_TEST_FLOOR: "77"
     steps:
       - uses: actions/checkout@v4
 
@@ -128,7 +143,20 @@ jobs:
           make -j "$(nproc)"
           sudo make install
 
-      # ⛔ LOADING THE EXTENSION IS THE ASSERTION THE PUBLISHED IMAGES FAILED. Doing
+      # The same source, configured as the standalone library the streaming
+      # engine links. Building it from the checkout above is what makes the
+      # engine tests measure the same MobilityDB the SQL routes measure; a
+      # libmeos from anywhere else would be a second, unnamed commit.
+      - name: Build and install libmeos from the same checkout
+        run: |
+          mkdir mobilitydb/build-meos
+          cd mobilitydb/build-meos
+          cmake -DMEOS=ON -DCMAKE_BUILD_TYPE=Release ..
+          make -j "$(nproc)"
+          sudo make install
+          sudo ldconfig
+
+      # LOADING THE EXTENSION IS THE ASSERTION THE PUBLISHED IMAGES FAILED. Doing
       # it in a step of its own, ahead of the fixture, is what makes a database that
       # cannot carry MobilityDB say so here rather than inside a fixture load.
       - name: Create the database and load the extension
@@ -144,35 +172,37 @@ jobs:
       - name: Load the conformance fixture
         run: psql "$MFAPI_DSN" -v ON_ERROR_STOP=1 -q -f tutorial/setup/load_conformance.sql
 
-      # ⛔ A SKIP IS NOT A PASS. Absent MFAPI_DSN every one of these tests skips and a
-      # job carrying them alone reports success having exercised nothing, which is the
-      # failure this job exists to prevent.
-      #
-      # The check is the SENTENCE those tests skip with, not the presence of a skip:
-      # the registry test records an identifier awaiting its live assertion by skipping
-      # a subtest, and reading that as an unreachable database convicts the job of a
-      # state it is deliberately in. What proves the database was reached is that no
-      # test skipped FOR WANT OF IT, and that a top-level group ran at all — a subtest
-      # line is indented, so the anchor counts groups rather than placeholders.
-      - name: Abstract tests against the fixture
+      # THE EXIT STATUS OF A PIPELINE IS ITS LAST STAGE'S. Without pipefail the
+      # status read here is tee's, which is always 0, and a failing test reaches the
+      # guard below as though it had passed.
+      - name: The whole suite, with every precondition supplied
         run: |
-          # ⛔ THE EXIT STATUS OF A PIPELINE IS ITS LAST STAGE'S. Without pipefail the
-          # status read here is tee's, which is always 0, and a failing test reaches the
-          # guard below as though it had passed.
           set -o pipefail
-          go test -run TestATSLive -v . 2>&1 | tee live.log
-          if grep -q 'needs the conformance fixture' live.log; then
-            echo "::error::a live conformance test skipped for want of MFAPI_DSN; the fixture database was not reached"
-            exit 1
-          fi
-          groups=$(grep -c '^--- PASS' live.log)
-          if [ "$groups" -lt 1 ]; then
-            echo "::error::no live conformance test group ran"
-            exit 1
-          fi
-          echo "$groups live conformance test group(s) ran against MobilityDB"
+          go test -tags meos -v ./... 2>&1 | tee suite.log
 
-      # ⛔ A SAMPLE THAT HAS DRIFTED IS WORSE THAN NO SAMPLE: it states what the
+      # A SKIP IS NOT A PASS, AND A DELETION IS NOT VISIBLE IN THE SKIP COUNT.
+      # Two rules, because each is blind to what the other catches. The first
+      # refuses a test that reported itself unrun; once that stands, deleting a
+      # test is the remaining way to stop running it, and it leaves no skip
+      # behind, so only the total moves. Subtests count in both: a t.Run whose
+      # body skips is as unrun as its parent would be.
+      - name: Refuse a skip, and a suite that shrank
+        run: |
+          skipped=$(grep -cE '^ *--- SKIP' suite.log || true)
+          if [ "$skipped" -ne 0 ]; then
+            echo "::error::${skipped} test(s) reported themselves skipped; every precondition is supplied in this job, so a skip is a defect"
+            grep -E '^ *--- SKIP' suite.log
+            exit 1
+          fi
+          ran=$(grep -cE '^--- PASS' suite.log || true)
+          if [ "$ran" -lt "$MFAPI_TEST_FLOOR" ]; then
+            echo "::error::${ran} top-level tests ran, below the floor of ${MFAPI_TEST_FLOOR}; a test has been excluded, filtered, renamed out of Test* or deleted"
+            exit 1
+          fi
+          subtests=$(grep -cE '^ +--- PASS' suite.log || true)
+          echo "${ran} top-level tests and ${subtests} subtests ran, none skipped"
+
+      # A SAMPLE THAT HAS DRIFTED IS WORSE THAN NO SAMPLE: it states what the
       # service used to answer, and a reader has no way to tell. Re-emitting here
       # and diffing against what is committed is what keeps samples/ the current
       # answer rather than a snapshot somebody forgot to refresh.

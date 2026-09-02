@@ -7,14 +7,22 @@ MobilityDB master, regenerates against it, and refuses a difference.
 
 ## What is generated
 
-`catalog_gen.go` is the table of MEOS temporal types: for each one, its name,
-its base type, its bounding box, the token `asMFJSON` writes for it, whether it
-is spatial, whether it is a number, and whether MEOS interpolates it linearly.
+`catalog_gen.go` holds two tables. `temporalTypes` is the MEOS temporal types:
+for each one, its name, its base type, its bounding box, the token `asMFJSON`
+writes for it, whether it is spatial, whether it is a number, and whether MEOS
+interpolates it linearly. `mathOps` is the MEOS functions that take a temporal
+number and answer one, each with the SQL name it carries on every engine, the
+MEOS C symbol behind it, and the C type of its one further parameter.
+
+`mathops_meos_gen.go` is the cgo call for each of those operations, behind the
+`meos` build tag. It is what keeps a C symbol out of hand-written code: a MEOS
+rename becomes a compile error rather than a wrong call.
 
 Run it against a catalog:
 
 ```bash
-go run ./tools/codegen -catalog <meos-idl.json> -o catalog_gen.go
+go run ./tools/codegen -catalog <meos-idl.json> \
+  -o catalog_gen.go -o-meos mathops_meos_gen.go
 ```
 
 ## Where the facts come from
@@ -42,6 +50,16 @@ catalog-consuming binding uses, and passes the path it reports to the
 generator.
 
 ## What the tier adds, and what holds it complete
+
+Which operations are POINTWISE is the tier's, because MEOS does not state it.
+The catalog places `derivative`, `trend` and `angularDifference` in the same
+group and the same category as `sin` and `abs`, since all five transform a
+temporal number's values; only the first three do it by walking segments, and a
+stream record is one instant with no neighbour to read. `liftedOps` in
+`stream.go` declares the pointwise subset by SQL name, and `catalog_test.go`
+checks every entry against `mathOps`: the name must be one the catalog states,
+it must name exactly one function, and the query supplies the further parameter
+exactly when the catalog gives it as a double.
 
 Two things are the standard's rather than MEOS's, so they are stated in
 `main.go` next to the code that uses them:

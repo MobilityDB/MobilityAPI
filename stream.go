@@ -200,31 +200,47 @@ func engineFor(name string) (StreamEngine, error) {
 	return e, nil
 }
 
-// opInfo describes a lifted scalar operation exposed by the streaming tier. The
-// engine maps the name to the MEOS function; the control plane only validates.
+// opInfo describes a lifted scalar operation exposed by the streaming tier.
+// sqlName is the operation's name on every MEOS engine, which is what ties the
+// entry to the catalog: catalog_gen.go states the MEOS symbol behind that name
+// and the further parameter it takes. needsArg says the query supplies that
+// parameter, which is so exactly when the catalog gives it as a double; where
+// the catalog gives another type the tier passes a constant of its own.
 type opInfo struct {
+	sqlName  string
 	needsArg bool
 	desc     string
 }
 
 // liftedOps is the catalogue of scalar operations a continuous transform can
-// apply to a tfloat stream. Every entry maps to a MEOS lifted temporal function.
+// apply to a tfloat stream. It is the POINTWISE subset of the operations
+// catalog_gen.go states: an operation whose value at an instant is a function
+// of the value at that instant alone. A stream record is one instant, so an
+// operation reading its neighbours has nothing to read.
+//
+// That property is the one thing about these operations MEOS does not state.
+// The catalog places derivative, trend and angularDifference in the same group
+// and the same category as sin and abs, because all five transform a temporal
+// number's values; only the first three do it by walking segments. So the
+// SUBSET is declared here and everything else about each entry is checked
+// against the catalog by catalog_test.go: a MEOS rename, a removal, or a change
+// of parameter fails the build rather than a request.
 var liftedOps = map[string]opInfo{
-	"ln":      {false, "natural logarithm"},
-	"exp":     {false, "exponential"},
-	"log10":   {false, "base-10 logarithm"},
-	"ceil":    {false, "ceiling"},
-	"floor":   {false, "floor"},
-	"abs":     {false, "absolute value"},
-	"degrees": {false, "radians to degrees"},
-	"radians": {false, "degrees to radians"},
-	"sin":     {false, "sine"},
-	"cos":     {false, "cosine"},
-	"tan":     {false, "tangent"},
-	"add":     {true, "add a scalar"},
-	"sub":     {true, "subtract a scalar"},
-	"mul":     {true, "multiply by a scalar"},
-	"div":     {true, "divide by a scalar"},
+	"ln":      {"ln", false, "natural logarithm"},
+	"exp":     {"exp", false, "exponential"},
+	"log10":   {"log10", false, "base-10 logarithm"},
+	"ceil":    {"ceil", false, "ceiling"},
+	"floor":   {"floor", false, "floor"},
+	"abs":     {"abs", false, "absolute value"},
+	"degrees": {"degrees", false, "radians to degrees"},
+	"radians": {"radians", false, "degrees to radians"},
+	"sin":     {"sin", false, "sine"},
+	"cos":     {"cos", false, "cosine"},
+	"tan":     {"tan", false, "tangent"},
+	"add":     {"tAdd", true, "add a scalar"},
+	"sub":     {"tSub", true, "subtract a scalar"},
+	"mul":     {"tMul", true, "multiply by a scalar"},
+	"div":     {"tDiv", true, "divide by a scalar"},
 }
 
 func supportedOps() string {

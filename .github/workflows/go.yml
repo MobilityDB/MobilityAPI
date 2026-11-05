@@ -15,9 +15,14 @@ jobs:
     name: Build and vet, every tag
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      # git names the branch a repository it initialises starts on, so the checkout
+      # prints no hint about an unset default.
+      - name: Name git's default branch
+        run: git config --global init.defaultBranch main
 
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache: true
@@ -110,10 +115,15 @@ jobs:
       # accounts for, because deleting a test is what a skip refusal cannot see.
       MFAPI_TEST_FLOOR: "150"
     steps:
-      - uses: actions/checkout@v4
+      # git names the branch a repository it initialises starts on, so the checkout
+      # prints no hint about an unset default.
+      - name: Name git's default branch
+        run: git config --global init.defaultBranch main
+
+      - uses: actions/checkout@v5
 
       - name: Check out MobilityDB master
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: MobilityDB/MobilityDB
           ref: master
@@ -125,7 +135,7 @@ jobs:
           git -C mobilitydb log -1 --format='MobilityDB master %H %s'
           echo "sha=$(git -C mobilitydb rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache: true
@@ -148,6 +158,10 @@ jobs:
       - name: Remove the runner's PostgreSQL, so apt.postgresql.org answers
         run: |
           sudo service postgresql stop || true
+          # The PostgreSQL the provision step installs leaves its psql.1.gz
+          # alternative pointing at nothing, so the package removal would repair
+          # it with a warning; it goes first.
+          sudo update-alternatives --remove-all psql.1.gz 2>/dev/null || true
           sudo apt-get --purge remove postgresql* -y || true
           sudo rm -rf /var/lib/postgresql/ /etc/postgresql/ /var/log/postgresql/ || true
 
@@ -173,9 +187,9 @@ jobs:
             libxml2-dev \
             zlib1g-dev \
             autoconf automake libtool \
-            postgresql-${PGVERSION} \
-            postgresql-${PGVERSION}-postgis-${POSTGISVERSION} \
-            postgresql-server-dev-${PGVERSION}
+            "postgresql-${PGVERSION}" \
+            "postgresql-${PGVERSION}-postgis-${POSTGISVERSION}" \
+            "postgresql-server-dev-${PGVERSION}"
 
       # WHAT ALL=ON REQUIRES, which is what lets the builds below ask for every
       # family. libh3 is the H3 family's library, and the vendored pgPointCloud
@@ -187,8 +201,8 @@ jobs:
       - name: Install what the optional families require
         run: |
           sudo apt-get install -y libh3-dev \
-            postgresql-${PGVERSION}-pointcloud \
-            postgresql-${PGVERSION}-h3
+            "postgresql-${PGVERSION}-pointcloud" \
+            "postgresql-${PGVERSION}-h3"
 
       # The pgdg libh3-dev package layout differs between releases, so the
       # header and the library are located on disk and pinned rather than left
@@ -204,8 +218,8 @@ jobs:
             echo "::error::could not locate libh3 headers/library"
             exit 1
           fi
-          echo "H3_INCLUDE_DIR=$(dirname "$H3_INC")" >> $GITHUB_ENV
-          echo "H3_LIBRARY=$H3_LIB" >> $GITHUB_ENV
+          echo "H3_INCLUDE_DIR=$(dirname "$H3_INC")" >> "$GITHUB_ENV"
+          echo "H3_LIBRARY=$H3_LIB" >> "$GITHUB_ENV"
 
       # ALL FAMILIES. A family left out is stripped at preprocess time, so this
       # job would report on a smaller MobilityDB than the one it names. The tier
@@ -295,6 +309,6 @@ jobs:
             fi
           done
           if [ "$rc" -eq 0 ]; then
-            echo "$(ls samples/*.json | wc -l) sample documents are what the service writes"
+            echo "$(find samples -maxdepth 1 -name '*.json' | wc -l) sample documents are what the service writes"
           fi
           exit $rc

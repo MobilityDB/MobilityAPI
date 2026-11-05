@@ -120,12 +120,30 @@ jobs:
           path: mobilitydb
 
       - name: Name the commit under test
-        run: git -C mobilitydb log -1 --format='MobilityDB master %H %s'
+        id: mdb
+        run: |
+          git -C mobilitydb log -1 --format='MobilityDB master %H %s'
+          echo "sha=$(git -C mobilitydb rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache: true
+
+      # GDAL WITHOUT GEOS, AND libmeos FROM THE COMMIT UNDER TEST. The action every
+      # consumer of MEOS uses builds GDAL from its release source with GEOS off,
+      # builds libmeos with every family from the commit checked out above, installs
+      # both under /usr/local, and fails if a GEOS library loads with libmeos. It runs
+      # first: the PostgreSQL it installs for its own build goes with the removal
+      # below, and the extension build compiles against the GDAL it leaves under
+      # /usr/local, so no GDAL development package is installed from apt. PostGIS,
+      # which the extension requires, brings its own GEOS, and that dependency is
+      # PostGIS's.
+      - name: Build GDAL without GEOS and libmeos from the commit under test
+        uses: MobilityDB/MEOS-API/.github/actions/provision-meos@master
+        with:
+          mobilitydb-ref: ${{ steps.mdb.outputs.sha }}
+          build-libmeos: "true"
 
       - name: Remove the runner's PostgreSQL, so apt.postgresql.org answers
         run: |
@@ -150,9 +168,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            libgeos++-dev \
             libproj-dev \
-            libgdal-dev \
             libjson-c-dev \
             libxml2-dev \
             zlib1g-dev \
@@ -206,24 +222,6 @@ jobs:
             -DH3_INCLUDE_DIR="$H3_INCLUDE_DIR" -DH3_LIBRARY="$H3_LIBRARY" ..
           make -j "$(nproc)"
           sudo make install
-
-      # The same source, configured as the standalone library the streaming
-      # engine links. Building it from the checkout above is what makes the
-      # engine tests measure the same MobilityDB the SQL routes measure; a
-      # libmeos from anywhere else would be a second, unnamed commit. Every
-      # family here too, which is what every other consumer of MEOS builds: the
-      # provision-meos action this repository uses for the catalog defaults to
-      # -DALL=ON. A standalone library needs no PostgreSQL extension for any of
-      # them, since the vendored pgPointCloud sources compile into it.
-      - name: Build and install libmeos from the same checkout
-        run: |
-          mkdir mobilitydb/build-meos
-          cd mobilitydb/build-meos
-          cmake -DMEOS=ON -DALL=ON -DCMAKE_BUILD_TYPE=Release \
-            -DH3_INCLUDE_DIR="$H3_INCLUDE_DIR" -DH3_LIBRARY="$H3_LIBRARY" ..
-          make -j "$(nproc)"
-          sudo make install
-          sudo ldconfig
 
       # LOADING THE EXTENSION IS THE ASSERTION THE PUBLISHED IMAGES FAILED. Doing
       # it in a step of its own, ahead of the fixture, is what makes a database that

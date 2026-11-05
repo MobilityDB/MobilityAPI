@@ -203,10 +203,10 @@ func TestTheCatalogStatesMoreThanTheTierLifts(t *testing.T) {
 	for _, info := range liftedOps {
 		lifted[info.sqlName] = true
 	}
-	// These three transform a temporal number's values by walking its segments,
+	// These two transform a temporal number's values by walking its segments,
 	// so on a stream record, which is one instant, they have no neighbour to
 	// read. They are in the catalog and must stay out of the lifted set.
-	for _, name := range []string{"derivative", "trend", "angularDifference"} {
+	for _, name := range []string{"derivative", "trend"} {
 		if len(mathOpBySQLName[name]) == 0 {
 			t.Errorf("the catalog no longer states %q, so this test no longer measures anything", name)
 		}

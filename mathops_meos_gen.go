@@ -26,8 +26,6 @@ func callMathOp(sqlName string, temp *C.Temporal, arg float64) (*C.Temporal, boo
 	switch sqlName {
 	case "abs":
 		return C.tnumber_abs(temp), true
-	case "angularDifference":
-		return C.tnumber_angular_difference(temp), true
 	case "ceil":
 		return C.tfloat_ceil(temp), true
 	case "cos":

@@ -48,7 +48,7 @@ var temporalTypes = []TemporalType{
 	{Name: "tposechain", Base: "posechain", Box: "stbox", MFJSON: "MovingPoseChain", Spatial: true, Number: false, Linear: true},
 	{Name: "tquadbin", Base: "quadbin", Box: "stbox", MFJSON: "MovingQuadbin", Spatial: true, Number: false, Linear: false},
 	{Name: "trgeometry", Base: "pose", Box: "stbox", MFJSON: "MovingRigidGeometry", Spatial: true, Number: false, Linear: true},
-	{Name: "ts2cell", Base: "s2cell", Box: "stbox", MFJSON: "", Spatial: true, Number: false, Linear: false},
+	{Name: "ts2cell", Base: "s2cell", Box: "stbox", MFJSON: "MovingS2Cell", Spatial: true, Number: false, Linear: false},
 	{Name: "ttext", Base: "text", Box: "tstzspan", MFJSON: "MovingText", Spatial: false, Number: false, Linear: false},
 }
 
@@ -74,7 +74,6 @@ type MathOp struct {
 // mathOps is every such function the catalog states, ordered by SQL name.
 var mathOps = []MathOp{
 	{SQLName: "abs", Symbol: "tnumber_abs", Arg: ""},
-	{SQLName: "angularDifference", Symbol: "tnumber_angular_difference", Arg: ""},
 	{SQLName: "ceil", Symbol: "tfloat_ceil", Arg: ""},
 	{SQLName: "cos", Symbol: "tfloat_cos", Arg: ""},
 	{SQLName: "degrees", Symbol: "tfloat_degrees", Arg: "bool"},

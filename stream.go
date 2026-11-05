@@ -219,9 +219,9 @@ type opInfo struct {
 // operation reading its neighbours has nothing to read.
 //
 // That property is the one thing about these operations MEOS does not state.
-// The catalog places derivative, trend and angularDifference in the same group
-// and the same category as sin and abs, because all five transform a temporal
-// number's values; only the first three do it by walking segments. So the
+// The catalog places derivative and trend in the same group and the same
+// category as sin and abs, because all four transform a temporal number's
+// values; only the first two do it by walking segments. So the
 // SUBSET is declared here and everything else about each entry is checked
 // against the catalog by catalog_test.go: a MEOS rename, a removal, or a change
 // of parameter fails the build rather than a request.

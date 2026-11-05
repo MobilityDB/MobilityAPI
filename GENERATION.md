@@ -52,9 +52,9 @@ generator.
 ## What the tier adds, and what holds it complete
 
 Which operations are POINTWISE is the tier's, because MEOS does not state it.
-The catalog places `derivative`, `trend` and `angularDifference` in the same
-group and the same category as `sin` and `abs`, since all five transform a
-temporal number's values; only the first three do it by walking segments, and a
+The catalog places `derivative` and `trend` in the same group and the same
+category as `sin` and `abs`, since all four transform a temporal number's
+values; only the first two do it by walking segments, and a
 stream record is one instant with no neighbour to read. `liftedOps` in
 `stream.go` declares the pointwise subset by SQL name, and `catalog_test.go`
 checks every entry against `mathOps`: the name must be one the catalog states,

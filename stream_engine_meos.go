@@ -12,8 +12,8 @@
 // tears down process-global caches (PROJ and its SRS cache, the PRNGs), so the
 // pair runs once for the process. The caches a query's own calls read -- the
 // session timezone and the collation -- are thread-local, so each query
-// initialises those on its own OS-locked thread; PROJ, GEOS and the RNGs are
-// created lazily per thread inside MEOS. A stream record is an instant, on
+// initialises those on its own OS-locked thread; PROJ and the RNGs are created
+// lazily per thread inside MEOS. A stream record is an instant, on
 // which every lifted function is exact (discrete interpolation applies it
 // pointwise), so a continuous transform introduces no approximation.
 package main
@@ -304,9 +304,13 @@ func liftInstant(op string, arg float64, in Instant) (Instant, error) {
 	}
 	defer C.free(unsafe.Pointer(res))
 
-	out := C.tfloat_out(res, C.int(15))
+	var size C.size_t
+	out := C.tfloat_out(res, C.int(15), &size)
+	if out == nil {
+		return Instant{}, fmt.Errorf("operation %q produced a result MEOS cannot write", op)
+	}
 	defer C.free(unsafe.Pointer(out))
-	return parseInstantText(C.GoString(out), in.T)
+	return parseInstantText(C.GoStringN(out, C.int(size-1)), in.T)
 }
 
 // parseInstantText reads MEOS's "value@timestamp" output back into an Instant,
@@ -434,8 +438,9 @@ func textAggregate(agg string, win []Instant) (any, int, error) {
 		texts := unsafe.Slice(arr, int(cnt))
 		set := map[string]struct{}{}
 		for _, tx := range texts {
-			cstr := C.text_out(tx)
-			set[C.GoString(cstr)] = struct{}{}
+			var size C.size_t
+			cstr := C.text_out(tx, &size)
+			set[C.GoStringN(cstr, C.int(size-1))] = struct{}{}
 			C.free(unsafe.Pointer(cstr))
 			C.free(unsafe.Pointer(tx))
 		}

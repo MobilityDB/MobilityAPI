@@ -7,8 +7,9 @@
 //	go run ./tools/codegen -catalog <meos-idl.json> -o-meos mathops_meos_gen.go
 //
 // One case per operation the catalog states over a temporal number, calling the
-// MEOS symbol the catalog names. An operation whose further parameter cannot be
-// filled from the single value a query carries gets no case.
+// MEOS symbol the catalog names. An operation whose further parameter has a type
+// the single value a query carries cannot fill, an interval or an
+// interpolation, gets no case.
 
 package main
 

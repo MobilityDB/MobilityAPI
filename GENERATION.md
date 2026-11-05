@@ -16,7 +16,13 @@ MEOS C symbol behind it, and the C type of its one further parameter.
 
 `mathops_meos_gen.go` is the cgo call for each of those operations, behind the
 `meos` build tag. It is what keeps a C symbol out of hand-written code: a MEOS
-rename becomes a compile error rather than a wrong call.
+rename becomes a compile error rather than a wrong call. The further parameter
+is filled from the one value a query carries according to the canonical
+spelling of its type, the C spelling with every typedef the catalog states
+resolved: `argConversions` in `tools/codegen` fills a `double`, an `int` and a
+`bool`, and `argUnfillable` states the types one value cannot fill, an interval
+and an interpolation, whose operations get no call. A type in neither stops the
+generator, naming the function that takes it.
 
 Run it against a catalog:
 

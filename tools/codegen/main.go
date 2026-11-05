@@ -49,9 +49,13 @@ type function struct {
 	Returns  ctype   `json:"returnType"`
 }
 
+// param is one parameter of a catalog function: its C spelling as the header
+// writes it, and its canonical spelling, which is the C spelling with every
+// typedef the catalog states resolved.
 type param struct {
-	Name  string `json:"name"`
-	CType string `json:"cType"`
+	Name      string `json:"name"`
+	CType     string `json:"cType"`
+	Canonical string `json:"canonical"`
 }
 
 type ctype struct {
@@ -89,7 +93,10 @@ func main() {
 			"MEOS-API that states one, or it is not a MEOS-API catalog", *path))
 	}
 
-	ops := mathOperations(c.Functions)
+	ops, err := mathOperations(c.Functions)
+	if err != nil {
+		fail(fmt.Errorf("%s: %w", *path, err))
+	}
 	if len(ops) == 0 {
 		fail(fmt.Errorf("%s names no temporal math operation: the groups this reads, "+
 			"meos_temporal_math and meos_temporal_transf, are not where they were", *path))
@@ -139,9 +146,10 @@ var mathPrefixes = map[string]bool{
 // mathOperation is one MEOS function over a temporal number that the tier can
 // apply to a stream record.
 type mathOperation struct {
-	SQLName string // the SQL name, which is the same on every engine
-	Symbol  string // the MEOS C symbol
-	Arg     string // the C type of its one further parameter, empty when it takes none
+	SQLName      string // the SQL name, which is the same on every engine
+	Symbol       string // the MEOS C symbol
+	Arg          string // the C type of its one further parameter, empty when it takes none
+	ArgCanonical string // the canonical spelling of that type, empty when it takes none
 }
 
 // mathOperations selects, from the catalog, the functions that take a temporal
@@ -157,7 +165,13 @@ type mathOperation struct {
 //     arithmetic form <op>_tfloat_float;
 //   - it takes at most one further parameter, and that parameter is not itself
 //     a Temporal, since a stream record carries one value and not two.
-func mathOperations(fns []function) []mathOperation {
+//
+// The type of that further parameter is read by its canonical spelling, and it
+// must be one argConversions fills or one argUnfillable states a query value
+// cannot fill: any other type is an error, so a type the catalog gives a
+// parameter reaches this tier as a failing generator rather than as a missing
+// operation.
+func mathOperations(fns []function) ([]mathOperation, error) {
 	var out []mathOperation
 	for _, f := range fns {
 		if !mathGroups[f.Group] || f.Category != "transformation" || f.SQLName == "" {
@@ -176,11 +190,23 @@ func mathOperations(fns []function) []mathOperation {
 		if !mathPrefixes[strings.SplitN(f.Name, "_", 2)[0]] && !strings.HasSuffix(f.Name, "_tfloat_float") {
 			continue
 		}
-		arg := ""
+		op := mathOperation{SQLName: f.SQLName, Symbol: f.Name}
 		if len(rest) == 1 {
-			arg = rest[0].CType
+			op.Arg = rest[0].CType
+			op.ArgCanonical = rest[0].Canonical
+			if op.ArgCanonical == "" {
+				return nil, fmt.Errorf("%s: the parameter %s carries no canonical spelling, "+
+					"so its type cannot be read from the catalog", f.Name, rest[0].Name)
+			}
+			if _, ok := argConversions[op.ArgCanonical]; !ok {
+				if _, ok := argUnfillable[op.ArgCanonical]; !ok {
+					return nil, fmt.Errorf("%s: the parameter %s has the type %q, which is "+
+						"neither filled from a query value (argConversions) nor stated as one "+
+						"a query value cannot fill (argUnfillable)", f.Name, rest[0].Name, op.ArgCanonical)
+				}
+			}
 		}
-		out = append(out, mathOperation{SQLName: f.SQLName, Symbol: f.Name, Arg: arg})
+		out = append(out, op)
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].SQLName != out[j].SQLName {
@@ -188,18 +214,27 @@ func mathOperations(fns []function) []mathOperation {
 		}
 		return out[i].Symbol < out[j].Symbol
 	})
-	return out
+	return out, nil
 }
 
 // argConversions turn the one float64 a continuous query carries into the C
-// value a MEOS function's further parameter takes. A parameter type absent from
-// this map cannot be filled from a query, so the operation carrying it gets no
-// case and reaches the caller as one the dispatch does not serve.
+// value a MEOS function's further parameter takes, keyed by the canonical
+// spelling of the parameter's type, so a typedef the catalog resolves to one of
+// these types is filled as that type.
 var argConversions = map[string]string{
 	"":       "",
 	"double": "C.double(arg)",
 	"int":    "C.int(arg)",
 	"bool":   "arg != 0",
+}
+
+// argUnfillable are the canonical parameter types the one float64 of a query
+// cannot fill, each with the reason. An operation taking one of them gets no
+// case and reaches the caller as one the dispatch does not serve. A type in
+// neither this map nor argConversions stops the generator.
+var argUnfillable = map[string]string{
+	"const Interval *": "an interval is a duration, not a single number",
+	"interpType":       "an interpolation is an enumeration, not a number",
 }
 
 // renderDispatch writes the cgo call for each operation, which is what keeps
@@ -217,8 +252,9 @@ func renderDispatch(ops []mathOperation) ([]byte, int, error) {
 //	go run ./tools/codegen -catalog <meos-idl.json> -o-meos mathops_meos_gen.go
 //
 // One case per operation the catalog states over a temporal number, calling the
-// MEOS symbol the catalog names. An operation whose further parameter cannot be
-// filled from the single value a query carries gets no case.
+// MEOS symbol the catalog names. An operation whose further parameter has a type
+// the single value a query carries cannot fill, an interval or an
+// interpolation, gets no case.
 
 package main
 
@@ -237,7 +273,7 @@ func callMathOp(sqlName string, temp *C.Temporal, arg float64) (*C.Temporal, boo
 `)
 	called := 0
 	for _, op := range ops {
-		conv, ok := argConversions[op.Arg]
+		conv, ok := argConversions[op.ArgCanonical]
 		if !ok {
 			continue
 		}

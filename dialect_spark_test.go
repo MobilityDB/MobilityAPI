@@ -5,12 +5,12 @@ import "testing"
 func TestRewriteSparkSQL(t *testing.T) {
 	in := "SELECT id, CAST(Tmin(b) AS text), Xmin(b), asMFJSON(g) FROM s"
 	got := rewriteSparkSQL(in)
-	want := "SELECT id, CAST(stboxTmin(b) AS string), stboxXmin(b), temporalAsMfjson(g) FROM s"
+	want := "SELECT id, CAST(stboxTmin(b) AS string), stboxXmin(b), asMFJSON(g) FROM s"
 	if got != want {
 		t.Errorf("rewriteSparkSQL\n got %q\nwant %q", got, want)
 	}
 	// identity for functions that match the Spark idiom already
-	id := "SELECT sequenceN(trip, 1), eIntersects(trip, env), speed(trip)"
+	id := "SELECT sequenceN(trip, 1), eIntersects(trip, env), speed(trip), asMFJSON(trip), tgeompointFromMFJSON(j)"
 	if rewriteSparkSQL(id) != id {
 		t.Errorf("identity functions were rewritten: %q", rewriteSparkSQL(id))
 	}

@@ -16,17 +16,16 @@ import (
 
 // sparkNameMap holds only the canonical names whose Spark idiom differs; every
 // other function (sequenceN, numSequences, atTime, speed, cumulativeLength,
-// eIntersects, trajectory, setSRID, tgeompoint, …) is identity.
+// eIntersects, trajectory, setSRID, tgeompoint, asMFJSON, tgeompointFromMFJSON,
+// …) is identity.
 var sparkNameMap = map[string]string{
-	"asMFJSON":             "temporalAsMfjson",
-	"tgeompointFromMFJSON": "tgeompointFromMfjson",
-	"Xmin":                 "stboxXmin",
-	"Ymin":                 "stboxYmin",
-	"Xmax":                 "stboxXmax",
-	"Ymax":                 "stboxYmax",
-	"Tmin":                 "stboxTmin",
-	"Tmax":                 "stboxTmax",
-	"azimuth":              "tpointAzimuth",
+	"Xmin":    "stboxXmin",
+	"Ymin":    "stboxYmin",
+	"Xmax":    "stboxXmax",
+	"Ymax":    "stboxYmax",
+	"Tmin":    "stboxTmin",
+	"Tmax":    "stboxTmax",
+	"azimuth": "tpointAzimuth",
 }
 
 var sparkFnCall = func() *regexp.Regexp {

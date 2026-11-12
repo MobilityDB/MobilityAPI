@@ -305,7 +305,7 @@ func liftInstant(op string, arg float64, in Instant) (Instant, error) {
 	defer C.free(unsafe.Pointer(res))
 
 	var size C.size_t
-	out := C.tfloat_out(res, C.int(15), &size)
+	out := C.temporal_out(res, C.int(15), &size)
 	if out == nil {
 		return Instant{}, fmt.Errorf("operation %q produced a result MEOS cannot write", op)
 	}

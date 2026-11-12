@@ -58,7 +58,7 @@ public class MfStreamBridgeJob {
             case "div":     r = GeneratedFunctions.div_tfloat_float(t, arg); break;
             default: throw new IllegalArgumentException("unknown operation: " + op);
         }
-        String s = GeneratedFunctions.tfloat_out(r, 15);
+        String s = GeneratedFunctions.temporal_out(r, 15);
         int at = s.indexOf('@');
         return at >= 0 ? s.substring(0, at) : s;
     }

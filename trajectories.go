@@ -102,7 +102,7 @@ func trajectories(w http.ResponseWriter, r *http.Request) {
 	tx.Exec(r.Context(), "SET LOCAL datestyle = 'ISO, YMD'")
 
 	rows, err := tx.Query(r.Context(),
-		"SELECT id, asMFJSON(transform(tsample(trip, make_interval(secs => $1)), 4326)) "+
+		"SELECT id, asMFJSON("+inWGS84(collectionType(r.Context(), tbl), "tsample(trip, make_interval(secs => $1))")+") "+
 			"FROM "+ident(tbl)+" WHERE numInstants(tsample(trip, make_interval(secs => $1))) > 1 ORDER BY id",
 		sample)
 	if err != nil {

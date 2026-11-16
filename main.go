@@ -356,9 +356,10 @@ func getCollection(w http.ResponseWriter, r *http.Request) {
 	crsURI := "http://www.opengis.net/def/crs/EPSG/0/" + itoa(srid)
 	// The one system the Core admits for a collection's spatial extent.
 	const crs84URI = "http://www.opengis.net/def/crs/OGC/1.3/CRS84"
+	typ := collectionType(r.Context(), cid)
 	col := map[string]any{
 		"id": cid, "title": title, "description": desc, "itemType": itemType,
-		"crs": []string{crsURI},
+		"crs": []string{crsURI}, "temporalGeometryType": typ,
 		"links": []map[string]string{
 			{"rel": "self", "href": "/collections/" + cid},
 			{"rel": "items", "href": "/collections/" + cid + "/items"},
@@ -376,11 +377,19 @@ func getCollection(w http.ResponseWriter, r *http.Request) {
 	//
 	// A collection whose SRID is unknown has no box statable in CRS84, and extent is
 	// not among the properties the schema requires, so it carries none.
+	// A box that cannot be transformed (a point cloud's tpcbox, whose system its
+	// schema fixes) is stated only where it is in WGS 84 already.
+	box := "extent(trip)"
+	if boxHas(typ, "transform") {
+		box = "transform(extent(trip), 4326)"
+	} else if srid != 4326 {
+		srid = 0
+	}
 	if srid != 0 {
 		var xmin, ymin, xmax, ymax *float64
 		var tmin, tmax *string
 		if err := db.QueryRow(r.Context(), "SELECT Xmin(e),Ymin(e),Xmax(e),Ymax(e),CAST(Tmin(e) AS text),CAST(Tmax(e) AS text) "+
-			"FROM (SELECT transform(extent(trip), 4326) e FROM "+ident(tbl)+") s").Scan(&xmin, &ymin, &xmax, &ymax, &tmin, &tmax); err == nil &&
+			"FROM (SELECT "+box+" e FROM "+ident(tbl)+") s").Scan(&xmin, &ymin, &xmax, &ymax, &tmin, &tmax); err == nil &&
 			xmin != nil && tmin != nil {
 			col["extent"] = map[string]any{
 				"spatial":  map[string]any{"bbox": [][]float64{{*xmin, *ymin, *xmax, *ymax}}, "crs": crs84URI},
@@ -422,6 +431,9 @@ func postCollection(w http.ResponseWriter, r *http.Request) {
 		Description string          `json:"description"`
 		ItemType    string          `json:"itemType"`
 		CRS         json.RawMessage `json:"crs"`
+		// GeometryType is the temporal type the collection holds its moving
+		// features' temporal geometry in, named as MEOS names its SQL type.
+		GeometryType string `json:"temporalGeometryType"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&c); err != nil || c.ID == "" {
 		httpErr(w, 400, "invalid Collection / missing id")
@@ -438,6 +450,14 @@ func postCollection(w http.ResponseWriter, r *http.Request) {
 	if c.ItemType == "" {
 		c.ItemType = "movingfeature"
 	}
+	if c.GeometryType == "" {
+		c.GeometryType = defaultGeometryType
+	}
+	if geometryTypes[c.GeometryType] == nil {
+		httpErr(w, 400, "temporalGeometryType "+c.GeometryType+" is not a temporal type a "+
+			"collection can hold its moving features in; it is one of "+geometryTypeNames())
+		return
+	}
 	srid := crsCode(c.CRS)
 	tx, err := db.Begin(r.Context())
 	if err != nil {
@@ -447,12 +467,20 @@ func postCollection(w http.ResponseWriter, r *http.Request) {
 	defer tx.Rollback(r.Context())
 	if _, err := tx.Exec(r.Context(),
 		`CREATE TABLE IF NOT EXISTS collections (id text PRIMARY KEY, title text,
-		   description text, item_type text, crs integer)`); err != nil {
+		   description text, item_type text, crs integer, geometry_type text)`); err != nil {
+		httpErr(w, 500, err.Error())
+		return
+	}
+	// A registry created before a collection stated its type has the other
+	// columns and not that one, and CREATE TABLE IF NOT EXISTS leaves such a
+	// table as it stands, as #ensureTPropTable finds for its value columns.
+	if _, err := tx.Exec(r.Context(),
+		"ALTER TABLE collections ADD COLUMN IF NOT EXISTS geometry_type text"); err != nil {
 		httpErr(w, 500, err.Error())
 		return
 	}
 	if _, err := tx.Exec(r.Context(),
-		"CREATE TABLE "+ident(c.ID)+" (id integer PRIMARY KEY, properties jsonb, trip tgeompoint)"); err != nil {
+		"CREATE TABLE "+ident(c.ID)+" (id integer PRIMARY KEY, properties jsonb, trip "+c.GeometryType+")"); err != nil {
 		httpErr(w, 400, "create collection failed: "+err.Error())
 		return
 	}
@@ -462,8 +490,8 @@ func postCollection(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := tx.Exec(r.Context(),
-		`INSERT INTO collections (id,title,description,item_type,crs) VALUES ($1,$2,$3,$4,$5)`,
-		c.ID, c.Title, c.Description, c.ItemType, srid); err != nil {
+		`INSERT INTO collections (id,title,description,item_type,crs,geometry_type) VALUES ($1,$2,$3,$4,$5,$6)`,
+		c.ID, c.Title, c.Description, c.ItemType, srid, c.GeometryType); err != nil {
 		httpErr(w, 400, "register collection failed: "+err.Error())
 		return
 	}
@@ -534,7 +562,7 @@ func deleteCollection(w http.ResponseWriter, r *http.Request) {
 
 // itemFilters builds the index-using WHERE clause and the temporalGeometry
 // expression (clipped when subTrajectory=true) from the OGC query parameters.
-func itemFilters(tbl string, srid int, q map[string][]string) (where string, tgExpr string, args []any, err error) {
+func itemFilters(tbl, typ string, srid int, q map[string][]string) (where string, tgExpr string, args []any, err error) {
 	conds := []string{}
 	add := func(c string, a ...any) { conds = append(conds, c); args = append(args, a...) }
 	// keyset cursor: ?after=<id>
@@ -559,6 +587,12 @@ func itemFilters(tbl string, srid int, q map[string][]string) (where string, tgE
 			if f[i], err = strconv.ParseFloat(strings.TrimSpace(p[i]), 64); err != nil {
 				return "", "", nil, errors.New("invalid bbox number")
 			}
+		}
+		// The box test alone would answer an approximation the filter does not
+		// mean, so a type MobilityDB states no eIntersects for refuses the filter.
+		if !typeHas(typ, "eIntersects") {
+			return "", "", nil, errors.New("bbox is not defined for a collection of " + typ +
+				": MobilityDB states no eIntersects over it")
 		}
 		n := len(args)
 		env := "ST_MakeEnvelope($" + itoa(n+1) + ",$" + itoa(n+2) + ",$" + itoa(n+3) + ",$" + itoa(n+4) + ",$" + itoa(n+5) + ")"
@@ -617,7 +651,8 @@ func streamItems(w http.ResponseWriter, r *http.Request) {
 	if limit > maxLimit {
 		limit = maxLimit
 	}
-	where, tgExpr, args, ferr := itemFilters(tbl, srid, q)
+	typ := collectionType(r.Context(), r.PathValue("cid"))
+	where, tgExpr, args, ferr := itemFilters(tbl, typ, srid, q)
 	if ferr != nil {
 		httpErr(w, 400, ferr.Error())
 		return
@@ -627,7 +662,7 @@ func streamItems(w http.ResponseWriter, r *http.Request) {
 	generic := collectionGeneric(r.Context(), tbl)
 	fc := featCols(generic)
 	sql := "SELECT id, " + propSel(generic) + ", Xmin(b),Ymin(b),Xmax(b),Ymax(b),CAST(Tmin(b) AS text),CAST(Tmax(b) AS text), asMFJSON(g) FROM (" +
-		"SELECT " + fc + ", g, stbox(g) AS b FROM (" +
+		"SELECT " + fc + ", g, " + boxOf(typ, "g") + " AS b FROM (" +
 		"SELECT " + fc + ", " + tgExpr + " AS g FROM " + ident(tbl) + " " + where +
 		" ORDER BY id LIMIT " + lp + ") i) s ORDER BY id"
 	rows, err := db.Query(r.Context(), sql, args...)
@@ -686,12 +721,14 @@ func getItem(w http.ResponseWriter, r *http.Request) {
 	}
 	generic := collectionGeneric(r.Context(), tbl)
 	fc := featCols(generic)
-	sql := "SELECT id, " + propSel(generic) + ", Xmin(b),Ymin(b),Xmax(b),Ymax(b),CAST(Tmin(b) AS text),CAST(Tmax(b) AS text), asMFJSON(g), CAST(ST_AsGeoJSON(trajectory(g)) AS text) FROM (" +
-		"SELECT " + fc + ", g, stbox(g) AS b FROM (" +
+	typ := collectionType(r.Context(), r.PathValue("cid"))
+	sql := "SELECT id, " + propSel(generic) + ", Xmin(b),Ymin(b),Xmax(b),Ymax(b),CAST(Tmin(b) AS text),CAST(Tmax(b) AS text), asMFJSON(g), " + staticGeometry(typ, "g") + " FROM (" +
+		"SELECT " + fc + ", g, " + boxOf(typ, "g") + " AS b FROM (" +
 		"SELECT " + fc + ", trip AS g FROM " + ident(tbl) + " WHERE id=$1) i) s"
 	var id int64
 	bx := make([]float64, 4)
-	var tmin, tmax, tgeom, geom string
+	var tmin, tmax, tgeom string
+	var geom *string
 	var props json.RawMessage
 	var serr error
 	if generic {
@@ -708,7 +745,11 @@ func getItem(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, 404, "feature not found")
 		return
 	}
-	feat, ferr := buildFeature(id, props, srid, bx, tmin, tmax, []byte(tgeom), []byte(geom), r.PathValue("cid"))
+	var geomJSON []byte
+	if geom != nil {
+		geomJSON = []byte(*geom)
+	}
+	feat, ferr := buildFeature(id, props, srid, bx, tmin, tmax, []byte(tgeom), geomJSON, r.PathValue("cid"))
 	if ferr != nil {
 		httpErr(w, 500, ferr.Error())
 		return
@@ -1145,8 +1186,15 @@ func tgSequenceQuery(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, 404, "no temporal geometry #"+itoa(tg)+" for this feature")
 		return
 	}
-	// Address the temporal primitive geometry by its sequence index.
+	// The query is the function its expression applies to trip, defined for a
+	// collection whose type MobilityDB states that function over.
 	spec := tProps[q]
+	fn := spec.expr[:strings.Index(spec.expr, "(")]
+	if typ := collectionType(r.Context(), r.PathValue("cid")); !typeHas(typ, fn) {
+		httpErr(w, 400, q+" is not defined for a collection of "+typ+": MobilityDB states no "+fn+" over it")
+		return
+	}
+	// Address the temporal primitive geometry by its sequence index.
 	spec.expr = strings.Replace(spec.expr, "trip", "sequenceN(trip, "+itoa(tg)+")", 1)
 	writeTemporalProperty(w, r, tbl, q, spec)
 }
@@ -1434,7 +1482,8 @@ func export(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, 404, "collection not found")
 		return
 	}
-	where, tgExpr, args, ferr := itemFilters(tbl, srid, r.URL.Query())
+	typ := collectionType(r.Context(), r.PathValue("cid"))
+	where, tgExpr, args, ferr := itemFilters(tbl, typ, srid, r.URL.Query())
 	if ferr != nil {
 		httpErr(w, 400, ferr.Error())
 		return
@@ -1446,7 +1495,7 @@ func export(w http.ResponseWriter, r *http.Request) {
 	}
 	generic := collectionGeneric(r.Context(), tbl)
 	if r.URL.Query().Get("format") == "parquet" {
-		streamParquet(w, r, tbl, tgExpr, where, tail, args, generic)
+		streamParquet(w, r, tbl, typ, tgExpr, where, tail, args, generic)
 		return
 	}
 	sql := "SELECT id, " + propSel(generic) + ", asMFJSON(" + tgExpr + ") " +
@@ -1511,9 +1560,10 @@ type pqRowGeneric struct {
 // every few thousand rows so memory stays bounded and each row group carries
 // its own min/max statistics for predicate pushdown. The trajectory geometry
 // materialises once per row (g) so the sidecar accessors do not re-clip.
-func streamParquet(w http.ResponseWriter, r *http.Request, tbl, tgExpr, where, tail string, args []any, generic bool) {
-	sidecar := " asBinary(g), Xmin(stbox(g)), Ymin(stbox(g)), Xmax(stbox(g)), Ymax(stbox(g))," +
-		" CAST(Tmin(stbox(g)) AS text), CAST(Tmax(stbox(g)) AS text) FROM (" +
+func streamParquet(w http.ResponseWriter, r *http.Request, tbl, typ, tgExpr, where, tail string, args []any, generic bool) {
+	b := boxOf(typ, "g")
+	sidecar := " asBinary(g), Xmin(" + b + "), Ymin(" + b + "), Xmax(" + b + "), Ymax(" + b + ")," +
+		" CAST(Tmin(" + b + ") AS text), CAST(Tmax(" + b + ") AS text) FROM (" +
 		"SELECT id, %s " + tgExpr + " AS g FROM " + ident(tbl) + " " + where + " ORDER BY id" + tail + ") s"
 	w.Header().Set("Content-Type", "application/vnd.apache.parquet")
 	w.Header().Set("Content-Disposition", `attachment; filename="`+tbl+`.parquet"`)
@@ -1592,6 +1642,7 @@ func postItem(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, 404, "collection not found")
 		return
 	}
+	typ := collectionType(r.Context(), r.PathValue("cid"))
 	var feat struct {
 		ID         json.Number     `json:"id"`
 		Properties map[string]any  `json:"properties"`
@@ -1618,14 +1669,16 @@ func postItem(w http.ResponseWriter, r *http.Request) {
 	id, _ := feat.ID.Int64()
 	var execErr error
 	if collectionGeneric(r.Context(), tbl) {
+		read, usesSRID := tripReader(typ, 3, 4)
 		_, execErr = db.Exec(r.Context(),
-			"INSERT INTO "+ident(tbl)+"(id,properties,trip) VALUES ($1,CAST($2 AS jsonb), setSRID(tgeompointFromMFJSON($3), $4))",
-			id, propsJSON(feat.Properties), string(tgBytes), srid)
+			"INSERT INTO "+ident(tbl)+"(id,properties,trip) VALUES ($1,CAST($2 AS jsonb), "+read+")",
+			withSRID([]any{id, propsJSON(feat.Properties), string(tgBytes), srid}, usesSRID)...)
 	} else {
 		name, _ := feat.Properties["name"].(string)
+		read, usesSRID := tripReader(typ, 4, 5)
 		_, execErr = db.Exec(r.Context(),
-			"INSERT INTO "+ident(tbl)+"(id,mmsi,name,trip) VALUES ($1,$2,$3, setSRID(tgeompointFromMFJSON($4), $5))",
-			id, nil, name, string(tgBytes), srid)
+			"INSERT INTO "+ident(tbl)+"(id,mmsi,name,trip) VALUES ($1,$2,$3, "+read+")",
+			withSRID([]any{id, nil, name, string(tgBytes), srid}, usesSRID)...)
 	}
 	if execErr != nil {
 		httpErr(w, 400, "ingest failed: "+execErr.Error())
@@ -1679,6 +1732,7 @@ func putItem(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, 404, "collection not found")
 		return
 	}
+	typ := collectionType(r.Context(), r.PathValue("cid"))
 	fid, err := strconv.Atoi(r.PathValue("fid"))
 	if err != nil {
 		httpErr(w, 400, "invalid feature id")
@@ -1691,14 +1745,16 @@ func putItem(w http.ResponseWriter, r *http.Request) {
 	}
 	var ct int64
 	if collectionGeneric(r.Context(), tbl) {
+		read, usesSRID := tripReader(typ, 3, 4)
 		ct, err = db.Exec(r.Context(),
-			"UPDATE "+ident(tbl)+" SET properties=CAST($2 AS jsonb), trip=setSRID(tgeompointFromMFJSON($3), $4) WHERE id=$1",
-			fid, propsJSON(props), tgText, srid)
+			"UPDATE "+ident(tbl)+" SET properties=CAST($2 AS jsonb), trip="+read+" WHERE id=$1",
+			withSRID([]any{fid, propsJSON(props), tgText, srid}, usesSRID)...)
 	} else {
 		name, _ := props["name"].(string)
+		read, usesSRID := tripReader(typ, 3, 4)
 		ct, err = db.Exec(r.Context(),
-			"UPDATE "+ident(tbl)+" SET name=$2, trip=setSRID(tgeompointFromMFJSON($3), $4) WHERE id=$1",
-			fid, name, tgText, srid)
+			"UPDATE "+ident(tbl)+" SET name=$2, trip="+read+" WHERE id=$1",
+			withSRID([]any{fid, name, tgText, srid}, usesSRID)...)
 	}
 	if err != nil {
 		httpErr(w, 400, "update failed: "+err.Error())
@@ -1755,6 +1811,7 @@ func postTgSequence(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, 404, "collection not found")
 		return
 	}
+	typ := collectionType(r.Context(), r.PathValue("cid"))
 	fid, err := strconv.Atoi(r.PathValue("fid"))
 	if err != nil {
 		httpErr(w, 400, "invalid feature id")
@@ -1765,9 +1822,10 @@ func postTgSequence(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, 400, derr.Error())
 		return
 	}
+	read, usesSRID := tripReader(typ, 2, 3)
 	ct, err := db.Exec(r.Context(),
-		"UPDATE "+ident(tbl)+" SET trip=merge(trip, setSRID(tgeompointFromMFJSON($2), $3)) WHERE id=$1",
-		fid, tgText, srid)
+		"UPDATE "+ident(tbl)+" SET trip=merge(trip, "+read+") WHERE id=$1",
+		withSRID([]any{fid, tgText, srid}, usesSRID)...)
 	if err != nil {
 		if strings.Contains(err.Error(), "overlap") {
 			httpErr(w, 409, "the sub-trajectory overlaps the existing temporal geometry in time: "+err.Error())

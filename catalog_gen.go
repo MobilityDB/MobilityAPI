@@ -14,7 +14,9 @@ package main
 
 // TemporalType is one MEOS temporal type, as MEOS's own catalog describes it.
 // MFJSON is empty for a type asMFJSON does not write, so an empty token is what
-// says a type has no MF-JSON form.
+// says a type has no MF-JSON form. Funcs are the SQL functions the tier applies
+// to a feature's temporal geometry that MobilityDB declares over the type, and
+// its MF-JSON reader <type>FromMFJSON, read from the catalog's SQL signatures.
 type TemporalType struct {
 	Name    string
 	Base    string
@@ -23,34 +25,48 @@ type TemporalType struct {
 	Spatial bool
 	Number  bool
 	Linear  bool
+	Funcs   []string
 }
 
 // temporalTypes is every temporal type MEOS declares, ordered by name.
 var temporalTypes = []TemporalType{
-	{Name: "tbigint", Base: "int8", Box: "tbox", MFJSON: "MovingBigInteger", Spatial: false, Number: true, Linear: false},
-	{Name: "tbool", Base: "bool", Box: "tstzspan", MFJSON: "MovingBoolean", Spatial: false, Number: false, Linear: false},
-	{Name: "tcbuffer", Base: "cbuffer", Box: "stbox", MFJSON: "MovingCircularBuffer", Spatial: true, Number: false, Linear: true},
-	{Name: "tdouble2", Base: "double2", Box: "tstzspan", MFJSON: "", Spatial: false, Number: false, Linear: true},
-	{Name: "tdouble3", Base: "double3", Box: "tstzspan", MFJSON: "", Spatial: false, Number: false, Linear: true},
-	{Name: "tdouble4", Base: "double4", Box: "tstzspan", MFJSON: "", Spatial: false, Number: false, Linear: true},
-	{Name: "tfloat", Base: "float8", Box: "tbox", MFJSON: "MovingFloat", Spatial: false, Number: true, Linear: true},
-	{Name: "tgeogpoint", Base: "geography", Box: "stbox", MFJSON: "MovingPoint", Spatial: true, Number: false, Linear: true},
-	{Name: "tgeography", Base: "geography", Box: "stbox", MFJSON: "MovingGeometry", Spatial: true, Number: false, Linear: false},
-	{Name: "tgeometry", Base: "geometry", Box: "stbox", MFJSON: "MovingGeometry", Spatial: true, Number: false, Linear: false},
-	{Name: "tgeompoint", Base: "geometry", Box: "stbox", MFJSON: "MovingPoint", Spatial: true, Number: false, Linear: true},
-	{Name: "th3index", Base: "h3index", Box: "stbox", MFJSON: "MovingH3Index", Spatial: true, Number: false, Linear: false},
-	{Name: "tint", Base: "int4", Box: "tbox", MFJSON: "MovingInteger", Spatial: false, Number: true, Linear: false},
-	{Name: "tjsonb", Base: "jsonb", Box: "tstzspan", MFJSON: "MovingJsonb", Spatial: false, Number: false, Linear: false},
-	{Name: "tnpoint", Base: "npoint", Box: "stbox", MFJSON: "MovingNetworkPoint", Spatial: true, Number: false, Linear: true},
-	{Name: "tpcpatch", Base: "pcpatch", Box: "tpcbox", MFJSON: "MovingPCPatch", Spatial: true, Number: false, Linear: false},
-	{Name: "tpcpoint", Base: "pcpoint", Box: "tpcbox", MFJSON: "MovingPCPoint", Spatial: true, Number: false, Linear: false},
-	{Name: "tpose", Base: "pose", Box: "stbox", MFJSON: "MovingPose", Spatial: true, Number: false, Linear: true},
-	{Name: "tposechain", Base: "posechain", Box: "stbox", MFJSON: "MovingPoseChain", Spatial: true, Number: false, Linear: true},
-	{Name: "tquadbin", Base: "quadbin", Box: "stbox", MFJSON: "MovingQuadbin", Spatial: true, Number: false, Linear: false},
-	{Name: "trgeometry", Base: "pose", Box: "stbox", MFJSON: "MovingRigidGeometry", Spatial: true, Number: false, Linear: true},
-	{Name: "ts2cell", Base: "s2cell", Box: "stbox", MFJSON: "MovingS2Cell", Spatial: true, Number: false, Linear: false},
-	{Name: "ttext", Base: "text", Box: "tstzspan", MFJSON: "MovingText", Spatial: false, Number: false, Linear: false},
+	{Name: "tbigint", Base: "int8", Box: "tbox", MFJSON: "MovingBigInteger", Spatial: false, Number: true, Linear: false, Funcs: []string{"appendInstant", "asBinary", "asMFJSON", "atTime", "deleteTime", "extent", "getTime", "merge", "numInstants", "numSequences", "sequenceN", "tbigintFromMFJSON", "tbox", "tsample"}},
+	{Name: "tbool", Base: "bool", Box: "tstzspan", MFJSON: "MovingBoolean", Spatial: false, Number: false, Linear: false, Funcs: []string{"appendInstant", "asBinary", "asMFJSON", "atTime", "deleteTime", "extent", "getTime", "merge", "numInstants", "numSequences", "sequenceN", "tboolFromMFJSON", "tsample"}},
+	{Name: "tcbuffer", Base: "cbuffer", Box: "stbox", MFJSON: "MovingCircularBuffer", Spatial: true, Number: false, Linear: true, Funcs: []string{"appendInstant", "asBinary", "asMFJSON", "atTime", "deleteTime", "eIntersects", "extent", "getTime", "merge", "numInstants", "numSequences", "sequenceN", "setSRID", "stbox", "tcbufferFromMFJSON", "transform", "tsample"}},
+	{Name: "tdouble2", Base: "double2", Box: "tstzspan", MFJSON: "", Spatial: false, Number: false, Linear: true, Funcs: []string(nil)},
+	{Name: "tdouble3", Base: "double3", Box: "tstzspan", MFJSON: "", Spatial: false, Number: false, Linear: true, Funcs: []string(nil)},
+	{Name: "tdouble4", Base: "double4", Box: "tstzspan", MFJSON: "", Spatial: false, Number: false, Linear: true, Funcs: []string(nil)},
+	{Name: "tfloat", Base: "float8", Box: "tbox", MFJSON: "MovingFloat", Spatial: false, Number: true, Linear: true, Funcs: []string{"appendInstant", "asBinary", "asMFJSON", "atTime", "deleteTime", "extent", "getTime", "merge", "numInstants", "numSequences", "sequenceN", "tbox", "tfloatFromMFJSON", "tsample"}},
+	{Name: "tgeogpoint", Base: "geography", Box: "stbox", MFJSON: "MovingPoint", Spatial: true, Number: false, Linear: true, Funcs: []string{"appendInstant", "asBinary", "asMFJSON", "atTime", "cumulativeLength", "deleteTime", "eIntersects", "extent", "getTime", "merge", "numInstants", "numSequences", "sequenceN", "setSRID", "speed", "stbox", "tgeogpointFromMFJSON", "trajectory", "transform", "tsample"}},
+	{Name: "tgeography", Base: "geography", Box: "stbox", MFJSON: "MovingGeometry", Spatial: true, Number: false, Linear: false, Funcs: []string{"appendInstant", "asBinary", "asMFJSON", "atTime", "deleteTime", "eIntersects", "extent", "getTime", "merge", "numInstants", "numSequences", "sequenceN", "setSRID", "stbox", "tgeographyFromMFJSON", "transform", "tsample"}},
+	{Name: "tgeometry", Base: "geometry", Box: "stbox", MFJSON: "MovingGeometry", Spatial: true, Number: false, Linear: false, Funcs: []string{"appendInstant", "asBinary", "asMFJSON", "atTime", "deleteTime", "eIntersects", "extent", "getTime", "merge", "numInstants", "numSequences", "sequenceN", "setSRID", "stbox", "tgeometryFromMFJSON", "transform", "tsample"}},
+	{Name: "tgeompoint", Base: "geometry", Box: "stbox", MFJSON: "MovingPoint", Spatial: true, Number: false, Linear: true, Funcs: []string{"appendInstant", "asBinary", "asMFJSON", "atTime", "cumulativeLength", "deleteTime", "eIntersects", "extent", "getTime", "merge", "numInstants", "numSequences", "sequenceN", "setSRID", "speed", "stbox", "tgeompointFromMFJSON", "trajectory", "transform", "tsample"}},
+	{Name: "th3index", Base: "h3index", Box: "stbox", MFJSON: "MovingH3Index", Spatial: true, Number: false, Linear: false, Funcs: []string{"appendInstant", "asBinary", "asMFJSON", "atTime", "deleteTime", "extent", "getTime", "merge", "numInstants", "numSequences", "sequenceN", "stbox", "th3indexFromMFJSON", "tsample"}},
+	{Name: "tint", Base: "int4", Box: "tbox", MFJSON: "MovingInteger", Spatial: false, Number: true, Linear: false, Funcs: []string{"appendInstant", "asBinary", "asMFJSON", "atTime", "deleteTime", "extent", "getTime", "merge", "numInstants", "numSequences", "sequenceN", "tbox", "tintFromMFJSON", "tsample"}},
+	{Name: "tjsonb", Base: "jsonb", Box: "tstzspan", MFJSON: "MovingJsonb", Spatial: false, Number: false, Linear: false, Funcs: []string{"appendInstant", "asBinary", "asMFJSON", "atTime", "deleteTime", "extent", "getTime", "merge", "numInstants", "numSequences", "sequenceN", "tjsonbFromMFJSON", "tsample"}},
+	{Name: "tnpoint", Base: "npoint", Box: "stbox", MFJSON: "MovingNetworkPoint", Spatial: true, Number: false, Linear: true, Funcs: []string{"appendInstant", "asBinary", "asMFJSON", "atTime", "cumulativeLength", "deleteTime", "extent", "getTime", "merge", "numInstants", "numSequences", "sequenceN", "speed", "stbox", "tnpointFromMFJSON", "trajectory", "tsample"}},
+	{Name: "tpcpatch", Base: "pcpatch", Box: "tpcbox", MFJSON: "MovingPCPatch", Spatial: true, Number: false, Linear: false, Funcs: []string{"appendInstant", "asBinary", "asMFJSON", "atTime", "deleteTime", "extent", "getTime", "merge", "numInstants", "numSequences", "sequenceN", "tpcbox", "tpcpatchFromMFJSON", "tsample"}},
+	{Name: "tpcpoint", Base: "pcpoint", Box: "tpcbox", MFJSON: "MovingPCPoint", Spatial: true, Number: false, Linear: false, Funcs: []string{"appendInstant", "asBinary", "asMFJSON", "atTime", "deleteTime", "extent", "getTime", "merge", "numInstants", "numSequences", "sequenceN", "tpcbox", "tpcpointFromMFJSON", "tsample"}},
+	{Name: "tpose", Base: "pose", Box: "stbox", MFJSON: "MovingPose", Spatial: true, Number: false, Linear: true, Funcs: []string{"appendInstant", "asBinary", "asMFJSON", "atTime", "deleteTime", "extent", "getTime", "merge", "numInstants", "numSequences", "sequenceN", "setSRID", "speed", "stbox", "tposeFromMFJSON", "trajectory", "transform", "tsample"}},
+	{Name: "tposechain", Base: "posechain", Box: "stbox", MFJSON: "MovingPoseChain", Spatial: true, Number: false, Linear: true, Funcs: []string{"appendInstant", "asBinary", "asMFJSON", "atTime", "deleteTime", "eIntersects", "extent", "getTime", "merge", "numInstants", "numSequences", "sequenceN", "setSRID", "stbox", "tposechainFromMFJSON", "transform", "tsample"}},
+	{Name: "tquadbin", Base: "quadbin", Box: "stbox", MFJSON: "MovingQuadbin", Spatial: true, Number: false, Linear: false, Funcs: []string{"appendInstant", "asBinary", "asMFJSON", "atTime", "deleteTime", "extent", "getTime", "merge", "numInstants", "numSequences", "sequenceN", "stbox", "tquadbinFromMFJSON", "tsample"}},
+	{Name: "trgeometry", Base: "pose", Box: "stbox", MFJSON: "MovingRigidGeometry", Spatial: true, Number: false, Linear: true, Funcs: []string{"appendInstant", "asBinary", "asMFJSON", "atTime", "cumulativeLength", "deleteTime", "eIntersects", "extent", "getTime", "merge", "numInstants", "numSequences", "sequenceN", "setSRID", "speed", "stbox", "transform", "trgeometryFromMFJSON"}},
+	{Name: "ts2cell", Base: "s2cell", Box: "stbox", MFJSON: "MovingS2Cell", Spatial: true, Number: false, Linear: false, Funcs: []string{"appendInstant", "asBinary", "asMFJSON", "atTime", "deleteTime", "extent", "getTime", "merge", "numInstants", "numSequences", "sequenceN", "stbox", "ts2cellFromMFJSON", "tsample"}},
+	{Name: "ttext", Base: "text", Box: "tstzspan", MFJSON: "MovingText", Spatial: false, Number: false, Linear: false, Funcs: []string{"appendInstant", "asBinary", "asMFJSON", "atTime", "deleteTime", "extent", "getTime", "merge", "numInstants", "numSequences", "sequenceN", "tsample", "ttextFromMFJSON"}},
 }
+
+// boxFunctions are, per bounding box type of a temporal type, the
+// featureFunctions MobilityDB declares over that box.
+var boxFunctions = map[string][]string{
+	"stbox":    []string{"asBinary", "extent", "setSRID", "transform"},
+	"tbox":     []string{"asBinary", "extent"},
+	"tpcbox":   []string{"asBinary", "extent", "setSRID", "stbox"},
+	"tstzspan": []string{"asBinary", "extent", "stbox", "tbox"},
+}
+
+// featureFunctions are the SQL functions the tier applies to a feature's
+// temporal geometry, the set each TemporalType's Funcs is read from.
+var featureFunctions = []string{"appendInstant", "asBinary", "asMFJSON", "atTime", "cumulativeLength", "deleteTime", "eIntersects", "extent", "getTime", "merge", "numInstants", "numSequences", "sequenceN", "setSRID", "speed", "trajectory", "transform", "tsample"}
 
 // temporalTypeByName indexes temporalTypes by the MEOS type name.
 var temporalTypeByName = func() map[string]*TemporalType {

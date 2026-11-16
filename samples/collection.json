@@ -42,6 +42,7 @@
       "type": "application/x-ndjson"
     }
   ],
+  "temporalGeometryType": "tgeompoint",
   "title": "conformance"
 }
 

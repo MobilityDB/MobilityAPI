@@ -55,7 +55,7 @@ func geometryEvents(ctx context.Context, tbl string, fid int, interval time.Dura
 	// transform to WGS84 so the positions are web-map coordinates regardless of
 	// the collection's stored CRS (e.g. ships are in EPSG:25832).
 	var mf *string
-	err := db.QueryRow(ctx, "SELECT asMFJSON(transform(trip, 4326)) FROM "+ident(tbl)+" WHERE id=$1", fid).Scan(&mf)
+	err := db.QueryRow(ctx, "SELECT asMFJSON("+inWGS84(collectionType(ctx, tbl), "trip")+") FROM "+ident(tbl)+" WHERE id=$1", fid).Scan(&mf)
 	if err != nil {
 		return nil, err
 	}

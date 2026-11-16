@@ -60,6 +60,14 @@ func bulkIngest(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, 404, "collection not found")
 		return
 	}
+	// A bulk row is a position, x and y or a WKB point, built into a tgeompoint
+	// instant, so a collection holding another type takes its features through
+	// the MF-JSON of POST /collections/{cid}/items instead.
+	if typ := collectionType(r.Context(), r.PathValue("cid")); typ != defaultGeometryType {
+		httpErr(w, 400, "bulk ingest builds tgeompoint instants from positions; a collection of "+
+			typ+" takes its features as MF-JSON through POST /collections/{cid}/items")
+		return
+	}
 
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, bulkMaxBytes))
 	if err != nil {

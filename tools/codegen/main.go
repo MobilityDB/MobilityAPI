@@ -35,18 +35,104 @@ import (
 type catalog struct {
 	TemporalTypes map[string]temporalType `json:"temporalTypes"`
 	Functions     []function              `json:"functions"`
+	Aggregates    []sqlSignature          `json:"aggregates"`
 }
 
 // function is the part of a catalog function entry the math-operation table
 // reads: the C symbol, the SQL name that is the cross-engine invariant, the
 // Doxygen group and category that place it, and the parameter C types.
 type function struct {
-	Name     string  `json:"name"`
-	Group    string  `json:"group"`
-	Category string  `json:"category"`
-	SQLName  string  `json:"sqlfn"`
-	Params   []param `json:"params"`
-	Returns  ctype   `json:"returnType"`
+	Name          string         `json:"name"`
+	Group         string         `json:"group"`
+	Category      string         `json:"category"`
+	SQLName       string         `json:"sqlfn"`
+	Params        []param        `json:"params"`
+	Returns       ctype          `json:"returnType"`
+	SQLSignatures []sqlSignature `json:"sqlSignatures"`
+}
+
+// sqlSignature is one SQL signature a C function backs: its argument types and,
+// where it differs from the function's sqlfn, the SQL name it carries.
+type sqlSignature struct {
+	Args    []string `json:"args"`
+	SQLName string   `json:"sqlName"`
+}
+
+// featureFunctions are the SQL functions the tier applies to a feature's
+// temporal geometry (the trip column). Which of them MobilityDB declares over a
+// temporal type decides what a collection of that type can answer, so the
+// generator records it per type, and trip_functions_test.go holds this list to
+// the functions the tier's SQL calls.
+var featureFunctions = []string{
+	"appendInstant", "asBinary", "asMFJSON", "atTime", "cumulativeLength",
+	"deleteTime", "eIntersects", "extent", "getTime", "merge", "numInstants",
+	"numSequences", "sequenceN", "setSRID", "speed", "trajectory", "transform",
+	"tsample",
+}
+
+// typeFunctions answers, per temporal type, the featureFunctions MobilityDB
+// declares with that type as first argument, and the type's MF-JSON reader
+// <type>FromMFJSON where it has one. Like #mathOperations it selects from the
+// catalog by the functions' own metadata alone, here their SQL signatures; a
+// signature carries its own sqlName where it differs from the function's sqlfn.
+func typeFunctions(fns []function, aggs []sqlSignature, types map[string]temporalType) map[string][]string {
+	wanted := map[string]bool{}
+	for _, n := range featureFunctions {
+		wanted[n] = true
+	}
+	// The box of a feature's temporal geometry is built by the constructor its
+	// type's bounding box names (stbox(trip), tpcbox(trip) for a point cloud).
+	for _, t := range types {
+		if t.Box != "" {
+			wanted[t.Box] = true
+		}
+	}
+	have := map[string]map[string]bool{}
+	for name, t := range types {
+		have[name] = map[string]bool{}
+		// The bounding box of a feature's temporal geometry is read the same
+		// way, the collection's extent transforming it where its type can be.
+		if t.Box != "" {
+			have[t.Box] = map[string]bool{}
+		}
+	}
+	for _, f := range fns {
+		for _, s := range f.SQLSignatures {
+			name := s.SQLName
+			if name == "" {
+				name = f.SQLName
+			}
+			if name == "" || len(s.Args) == 0 {
+				continue
+			}
+			if t, ok := have[s.Args[0]]; ok && wanted[name] {
+				t[name] = true
+			}
+			if s.Args[0] == "text" && strings.HasSuffix(name, "FromMFJSON") {
+				if t, ok := have[strings.TrimSuffix(name, "FromMFJSON")]; ok {
+					t[name] = true
+				}
+			}
+		}
+	}
+	// An aggregate (extent) states its SQL name and arguments in the catalog's
+	// aggregates registry, as a scalar signature does.
+	for _, a := range aggs {
+		if len(a.Args) == 0 {
+			continue
+		}
+		if t, ok := have[a.Args[0]]; ok && wanted[a.SQLName] {
+			t[a.SQLName] = true
+		}
+	}
+	out := map[string][]string{}
+	for tname, t := range have {
+		for n := range t {
+			out[tname] = append(out[tname], n)
+		}
+		sort.Strings(out[tname])
+	}
+	return out
 }
 
 // param is one parameter of a catalog function: its C spelling as the header
@@ -102,7 +188,7 @@ func main() {
 			"meos_temporal_math and meos_temporal_transf, are not where they were", *path))
 	}
 
-	src, err := render(c.TemporalTypes, ops)
+	src, err := render(c.TemporalTypes, typeFunctions(c.Functions, c.Aggregates, c.TemporalTypes), ops)
 	if err != nil {
 		fail(err)
 	}
@@ -293,7 +379,7 @@ func callMathOp(sqlName string, temp *C.Temporal, arg float64) (*C.Temporal, boo
 	return src, called, err
 }
 
-func render(types map[string]temporalType, ops []mathOperation) ([]byte, error) {
+func render(types map[string]temporalType, funcs map[string][]string, ops []mathOperation) ([]byte, error) {
 	names := make([]string, 0, len(types))
 	for name := range types {
 		names = append(names, name)
@@ -317,7 +403,9 @@ package main
 
 // TemporalType is one MEOS temporal type, as MEOS's own catalog describes it.
 // MFJSON is empty for a type asMFJSON does not write, so an empty token is what
-// says a type has no MF-JSON form.
+// says a type has no MF-JSON form. Funcs are the SQL functions the tier applies
+// to a feature's temporal geometry that MobilityDB declares over the type, and
+// its MF-JSON reader <type>FromMFJSON, read from the catalog's SQL signatures.
 type TemporalType struct {
 	Name    string
 	Base    string
@@ -326,6 +414,7 @@ type TemporalType struct {
 	Spatial bool
 	Number  bool
 	Linear  bool
+	Funcs   []string
 }
 
 // temporalTypes is every temporal type MEOS declares, ordered by name.
@@ -333,11 +422,31 @@ var temporalTypes = []TemporalType{
 `)
 	for _, name := range names {
 		t := types[name]
-		fmt.Fprintf(&b, "\t{Name: %q, Base: %q, Box: %q, MFJSON: %q, Spatial: %t, Number: %t, Linear: %t},\n",
-			name, t.Base, t.Box, t.MFJSON, t.Spatial, t.Number, t.Linear)
+		fmt.Fprintf(&b, "\t{Name: %q, Base: %q, Box: %q, MFJSON: %q, Spatial: %t, Number: %t, Linear: %t, Funcs: %#v},\n",
+			name, t.Base, t.Box, t.MFJSON, t.Spatial, t.Number, t.Linear, funcs[name])
 	}
-	b.WriteString(`}
-
+	boxes := map[string]bool{}
+	for _, t := range types {
+		if t.Box != "" {
+			boxes[t.Box] = true
+		}
+	}
+	boxNames := make([]string, 0, len(boxes))
+	for n := range boxes {
+		boxNames = append(boxNames, n)
+	}
+	sort.Strings(boxNames)
+	b.WriteString("}\n\n// boxFunctions are, per bounding box type of a temporal type, the\n" +
+		"// featureFunctions MobilityDB declares over that box.\n" +
+		"var boxFunctions = map[string][]string{\n")
+	for _, n := range boxNames {
+		fmt.Fprintf(&b, "\t%q: %#v,\n", n, funcs[n])
+	}
+	b.WriteString("}\n\n// featureFunctions are the SQL functions the tier applies to a feature's\n" +
+		"// temporal geometry, the set each TemporalType's Funcs is read from.\n" +
+		"var featureFunctions = ")
+	fmt.Fprintf(&b, "%#v\n", featureFunctions)
+	b.WriteString(`
 // temporalTypeByName indexes temporalTypes by the MEOS type name.
 var temporalTypeByName = func() map[string]*TemporalType {
 	m := make(map[string]*TemporalType, len(temporalTypes))

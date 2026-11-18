@@ -122,3 +122,28 @@ var mathOpBySQLName = func() map[string][]*MathOp {
 	}
 	return m
 }()
+
+// RasterType is one raster type of MEOS, the SQL type of a struct of the family
+// RASTER. Funcs are the SQL functions MobilityDB declares over it, as an argument
+// or as their result, which are what a raster collection of the type answers:
+// the public functions of the family carrying a SQL name, less the support
+// functions of a type and of an aggregate, and the family's aggregates.
+type RasterType struct {
+	Name  string
+	Funcs []string
+}
+
+// rasterTypes is every raster type MEOS declares, ordered by name.
+var rasterTypes = []RasterType{
+	{Name: "raquet", Funcs: []string{"aRasterValue", "asCoverageJSON", "asHexWKB", "atRasterValue", "bandHasNoDataValue", "bandNoDataValue", "bandPixelType", "cmp", "eRasterValue", "eq", "ge", "gt", "hash", "hashExtended", "height", "le", "lt", "minusRasterValue", "ne", "pixels", "quadbin", "raquet", "raquetFromHexWKB", "raquetFromRow", "raquetRead", "rasterTileValue", "stbox", "width"}},
+	{Name: "raster", Funcs: []string{"SRID", "aRasterValue", "addBand", "asBinary", "asCoverageJSON", "asGDALRaster", "asHexWKB", "asJPEG", "asPNG", "asTIFF", "atRasterValue", "bandHasNoDataValue", "bandNoDataValue", "bandPixelType", "clip", "dumpAsPolygons", "dumpValues", "eRasterValue", "height", "makeEmptyRaster", "mapAlgebra", "minusRasterValue", "notSameAlignmentReason", "numBands", "pixelAsPoints", "pixels", "raster", "rasterAdd", "rasterDiv", "rasterFromBinary", "rasterFromGDALRaster", "rasterFromHexWKB", "rasterMul", "rasterSub", "rasterUnion", "rasterValue", "reclass", "rescale", "sameAlignment", "scaleX", "scaleY", "setValues", "skewX", "skewY", "slope", "stbox", "summaryStats", "summaryStatsAgg", "tpi", "transform", "transformPipeline", "tri", "upperLeftX", "upperLeftY", "valueCount", "valuePercent", "width"}},
+}
+
+// rasterTypeByName indexes rasterTypes by the SQL type name.
+var rasterTypeByName = func() map[string]*RasterType {
+	m := make(map[string]*RasterType, len(rasterTypes))
+	for i := range rasterTypes {
+		m[rasterTypes[i].Name] = &rasterTypes[i]
+	}
+	return m
+}()

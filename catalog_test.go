@@ -24,6 +24,34 @@ func TestCatalogIsPopulated(t *testing.T) {
 	}
 }
 
+// The raster types are what a raster collection holds, each with the functions
+// it answers, as #TestCatalogIsPopulated asserts of the temporal types: every
+// row is named, answers some function, lists each once in order, and is indexed.
+func TestRasterTypesArePopulated(t *testing.T) {
+	if len(rasterTypes) == 0 {
+		t.Fatal("the generated catalog holds no raster type; regenerate with go run ./tools/codegen")
+	}
+	for _, rt := range rasterTypes {
+		if rt.Name == "" || len(rt.Funcs) == 0 {
+			t.Errorf("a raster row carries no name or no function: %+v", rt)
+		}
+		if !sort.StringsAreSorted(rt.Funcs) {
+			t.Errorf("the functions of %s are not in order", rt.Name)
+		}
+		for i := 1; i < len(rt.Funcs); i++ {
+			if rt.Funcs[i] == rt.Funcs[i-1] {
+				t.Errorf("%s lists %s twice", rt.Name, rt.Funcs[i])
+			}
+		}
+		if got := rasterTypeByName[rt.Name]; got == nil || got.Name != rt.Name {
+			t.Errorf("rasterTypeByName does not index %q", rt.Name)
+		}
+		if temporalTypeByName[rt.Name] != nil {
+			t.Errorf("%s is both a raster type and a temporal type", rt.Name)
+		}
+	}
+}
+
 // A temporal property is a non-spatial value, so every non-spatial type MEOS
 // writes MF-JSON for and gives a base the standard has a token for must be one
 // the store can carry. A type MEOS adds over such a base arrives here as a

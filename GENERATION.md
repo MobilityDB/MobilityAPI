@@ -7,12 +7,21 @@ MobilityDB master, regenerates against it, and refuses a difference.
 
 ## What is generated
 
-`catalog_gen.go` holds two tables. `temporalTypes` is the MEOS temporal types:
+`catalog_gen.go` holds three tables. `temporalTypes` is the MEOS temporal types:
 for each one, its name, its base type, its bounding box, the token `asMFJSON`
 writes for it, whether it is spatial, whether it is a number, and whether MEOS
 interpolates it linearly. `mathOps` is the MEOS functions that take a temporal
 number and answer one, each with the SQL name it carries on every engine, the
 MEOS C symbol behind it, and the C type of its one further parameter.
+`rasterTypes` is the raster types a raster collection holds, `raster` and
+`raquet`, each with the SQL functions MobilityDB declares over it, which are
+what a collection of the type answers. A raster type is the SQL type of a
+struct of the family `RASTER`, read from the signature of the function that
+reads the struct's text form. Its functions are counted by the rule of
+MobilityDB's `tools/raster_matrix.py`: the public functions of the family
+carrying a SQL name, less the support functions of a type and of an aggregate,
+and the family's aggregates, each credited to every raster type one of its
+signatures names, as an argument or as its result.
 
 `mathops_meos_gen.go` is the cgo call for each of those operations, behind the
 `meos` build tag. It is what keeps a C symbol out of hand-written code: a MEOS

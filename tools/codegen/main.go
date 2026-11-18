@@ -36,26 +36,56 @@ type catalog struct {
 	TemporalTypes map[string]temporalType `json:"temporalTypes"`
 	Functions     []function              `json:"functions"`
 	Aggregates    []sqlSignature          `json:"aggregates"`
+	Structs       []cStruct               `json:"structs"`
 }
 
-// function is the part of a catalog function entry the math-operation table
-// reads: the C symbol, the SQL name that is the cross-engine invariant, the
-// Doxygen group and category that place it, and the parameter C types.
+// function is the part of a catalog function entry the tables read: the C
+// symbol, the SQL name that is the cross-engine invariant, the Doxygen group and
+// category that place it, the family and API level MEOS gives it, the
+// aggregates it supports, and the parameter C types.
 type function struct {
 	Name          string         `json:"name"`
 	Group         string         `json:"group"`
 	Category      string         `json:"category"`
+	Family        string         `json:"family"`
+	API           string         `json:"api"`
 	SQLName       string         `json:"sqlfn"`
+	SQLAgg        []string       `json:"sqlAgg"`
 	Params        []param        `json:"params"`
 	Returns       ctype          `json:"returnType"`
 	SQLSignatures []sqlSignature `json:"sqlSignatures"`
 }
 
-// sqlSignature is one SQL signature a C function backs: its argument types and,
-// where it differs from the function's sqlfn, the SQL name it carries.
+// sqlSignature is one SQL signature a C function backs: its argument and result
+// types, where it differs from the function's sqlfn the SQL name it carries, and
+// the support role it plays for a type (input, output, receive, send). An
+// aggregate states the same, with the MEOS function its transition calls.
 type sqlSignature struct {
-	Args    []string `json:"args"`
-	SQLName string   `json:"sqlName"`
+	Args        []string    `json:"args"`
+	Ret         string      `json:"ret"`
+	SQLName     string      `json:"sqlName"`
+	TypeSupport string      `json:"typeSupport"`
+	Transition  *transition `json:"transition"`
+}
+
+// transition is the MEOS function an aggregate's transition calls.
+type transition struct {
+	Meos string `json:"meos"`
+}
+
+// cStruct is one C struct of the catalog: its family, and the functions that
+// read and write its text form.
+type cStruct struct {
+	Name          string        `json:"name"`
+	Family        string        `json:"family"`
+	Serialization serialization `json:"serialization"`
+}
+
+// serialization names the functions that read (In) and write (Out) a struct's
+// text form.
+type serialization struct {
+	In  string `json:"in"`
+	Out string `json:"out"`
 }
 
 // featureFunctions are the SQL functions the tier applies to a feature's
@@ -135,6 +165,92 @@ func typeFunctions(fns []function, aggs []sqlSignature, types map[string]tempora
 	return out
 }
 
+// rasterFamily is the MEOS family whose types a raster collection holds.
+const rasterFamily = "RASTER"
+
+// rasterFunctions answers, per raster type, the SQL functions MobilityDB
+// declares over it, which are what a raster collection can answer. It is the
+// raster counterpart of #typeFunctions, reading the same SQL signatures and
+// aggregates and crediting a signature's own sqlName where it carries one.
+//
+// The raster types are the SQL types of the structs of the family: a struct
+// states the function reading its text form, and that function's SQL signature
+// answers the type, so `raster` and `raquet` are read from the catalog rather
+// than listed here.
+//
+// The functions are those MobilityDB/MobilityDB tools/raster_matrix.py counts
+// as the raster surface, by the same rule: the public functions of the family
+// carrying a SQL name, less the support functions of a type (a signature with a
+// typeSupport role, raquet_in) and of an aggregate (sqlAgg, rasterUnionCombine),
+// and the aggregates whose transition is a function of the family, under the
+// aggregate's own name. A function belongs to every raster type one of its
+// signatures names, as an argument or as its result, an array of the type
+// included, so that rasterValue(tgeompoint, raster) is a function of `raster`.
+func rasterFunctions(c catalog) (map[string][]string, error) {
+	byName := map[string]*function{}
+	family := map[string]bool{}
+	for i := range c.Functions {
+		f := &c.Functions[i]
+		byName[f.Name] = f
+		if f.Family == rasterFamily {
+			family[f.Name] = true
+		}
+	}
+	have := map[string]map[string]bool{}
+	for _, s := range c.Structs {
+		if s.Family != rasterFamily || s.Serialization.In == "" {
+			continue
+		}
+		in, ok := byName[s.Serialization.In]
+		if !ok || len(in.SQLSignatures) == 0 || in.SQLSignatures[0].Ret == "" {
+			return nil, fmt.Errorf("the struct %s reads its text form with %s, which "+
+				"states no SQL signature answering a type", s.Name, s.Serialization.In)
+		}
+		have[in.SQLSignatures[0].Ret] = map[string]bool{}
+	}
+	// add credits name to every raster type a signature names.
+	add := func(name string, sig sqlSignature) {
+		for _, t := range append(append([]string{}, sig.Args...), sig.Ret) {
+			if fs, ok := have[strings.ToLower(strings.TrimSuffix(strings.TrimSpace(t), "[]"))]; ok {
+				fs[name] = true
+			}
+		}
+	}
+	for _, f := range c.Functions {
+		if f.Family != rasterFamily || f.API != "public" || f.SQLName == "" || len(f.SQLAgg) > 0 {
+			continue
+		}
+		support := false
+		for _, s := range f.SQLSignatures {
+			support = support || s.TypeSupport != ""
+		}
+		if support {
+			continue
+		}
+		for _, s := range f.SQLSignatures {
+			name := s.SQLName
+			if name == "" {
+				name = f.SQLName
+			}
+			add(name, s)
+		}
+	}
+	for _, a := range c.Aggregates {
+		if a.Transition != nil && family[a.Transition.Meos] {
+			add(a.SQLName, a)
+		}
+	}
+	out := map[string][]string{}
+	for typ, fs := range have {
+		out[typ] = []string{}
+		for n := range fs {
+			out[typ] = append(out[typ], n)
+		}
+		sort.Strings(out[typ])
+	}
+	return out, nil
+}
+
 // param is one parameter of a catalog function: its C spelling as the header
 // writes it, and its canonical spelling, which is the C spelling with every
 // typedef the catalog states resolved.
@@ -188,7 +304,16 @@ func main() {
 			"meos_temporal_math and meos_temporal_transf, are not where they were", *path))
 	}
 
-	src, err := render(c.TemporalTypes, typeFunctions(c.Functions, c.Aggregates, c.TemporalTypes), ops)
+	raster, err := rasterFunctions(c)
+	if err != nil {
+		fail(fmt.Errorf("%s: %w", *path, err))
+	}
+	if len(raster) == 0 {
+		fail(fmt.Errorf("%s names no raster type: no struct of the family %s states "+
+			"the function reading its text form", *path, rasterFamily))
+	}
+
+	src, err := render(c.TemporalTypes, typeFunctions(c.Functions, c.Aggregates, c.TemporalTypes), ops, raster)
 	if err != nil {
 		fail(err)
 	}
@@ -203,8 +328,9 @@ func main() {
 	if err := os.WriteFile(*outMeos, dispatch, 0o644); err != nil {
 		fail(err)
 	}
-	fmt.Fprintf(os.Stderr, "codegen: %d temporal types and %d math operations written to %s, "+
-		"%d of them callable from %s\n", len(c.TemporalTypes), len(ops), *out, called, *outMeos)
+	fmt.Fprintf(os.Stderr, "codegen: %d temporal types, %d raster types and %d math operations "+
+		"written to %s, %d of them callable from %s\n", len(c.TemporalTypes), len(raster), len(ops),
+		*out, called, *outMeos)
 }
 
 func fail(err error) {
@@ -379,7 +505,11 @@ func callMathOp(sqlName string, temp *C.Temporal, arg float64) (*C.Temporal, boo
 	return src, called, err
 }
 
-func render(types map[string]temporalType, funcs map[string][]string, ops []mathOperation) ([]byte, error) {
+// render writes catalog_gen.go, the tables the tier reads, as #renderDispatch
+// writes the cgo dispatch: the temporal types with their functions, the boxes,
+// the math operations, and the raster types with their functions.
+func render(types map[string]temporalType, funcs map[string][]string, ops []mathOperation,
+	raster map[string][]string) ([]byte, error) {
 	names := make([]string, 0, len(types))
 	for name := range types {
 		names = append(names, name)
@@ -481,6 +611,38 @@ var mathOpBySQLName = func() map[string][]*MathOp {
 	m := map[string][]*MathOp{}
 	for i := range mathOps {
 		m[mathOps[i].SQLName] = append(m[mathOps[i].SQLName], &mathOps[i])
+	}
+	return m
+}()
+
+// RasterType is one raster type of MEOS, the SQL type of a struct of the family
+// RASTER. Funcs are the SQL functions MobilityDB declares over it, as an argument
+// or as their result, which are what a raster collection of the type answers:
+// the public functions of the family carrying a SQL name, less the support
+// functions of a type and of an aggregate, and the family's aggregates.
+type RasterType struct {
+	Name  string
+	Funcs []string
+}
+
+// rasterTypes is every raster type MEOS declares, ordered by name.
+var rasterTypes = []RasterType{
+`)
+	rnames := make([]string, 0, len(raster))
+	for n := range raster {
+		rnames = append(rnames, n)
+	}
+	sort.Strings(rnames)
+	for _, n := range rnames {
+		fmt.Fprintf(&b, "\t{Name: %q, Funcs: %#v},\n", n, raster[n])
+	}
+	b.WriteString(`}
+
+// rasterTypeByName indexes rasterTypes by the SQL type name.
+var rasterTypeByName = func() map[string]*RasterType {
+	m := make(map[string]*RasterType, len(rasterTypes))
+	for i := range rasterTypes {
+		m[rasterTypes[i].Name] = &rasterTypes[i]
 	}
 	return m
 }()

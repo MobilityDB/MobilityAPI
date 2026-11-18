@@ -86,6 +86,11 @@
         "summary": "Replace collection metadata"
       }
     },
+    "/collections/{cid}/area": {
+      "get": {
+        "summary": "OGC API - EDR: the area query over a raster collection, coords a WKT POLYGON, answered in CoverageJSON"
+      }
+    },
     "/collections/{cid}/bulk": {
       "post": {
         "responses": {
@@ -94,6 +99,11 @@
           }
         },
         "summary": "Bulk ingest (extension): a batch of (vehicleId, position, time) observations as GeoJSON Points or GeoParquet, optionally gzip/deflate/br/zstd-compressed; each is appended as one instant"
+      }
+    },
+    "/collections/{cid}/corridor": {
+      "get": {
+        "summary": "OGC API - EDR: the corridor query over a raster collection, coords a WKT LINESTRING, answered in CoverageJSON"
       }
     },
     "/collections/{cid}/coverage": {
@@ -546,6 +556,11 @@
         "summary": "Delete a temporal primitive value (member value sequence) by its 1-based id"
       }
     },
+    "/collections/{cid}/position": {
+      "get": {
+        "summary": "OGC API - EDR: the position query over a raster collection, coords a WKT POINT, answered in CoverageJSON"
+      }
+    },
     "/collections/{cid}/schema": {
       "get": {
         "responses": {
@@ -554,6 +569,11 @@
           }
         },
         "summary": "OGC API - Coverages: the fields of a raster collection, one per band"
+      }
+    },
+    "/collections/{cid}/trajectory": {
+      "get": {
+        "summary": "OGC API - EDR: the trajectory query over a raster collection, coords a WKT LINESTRING, answered in CoverageJSON"
       }
     },
     "/conformance": {

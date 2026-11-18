@@ -96,6 +96,16 @@
         "summary": "Bulk ingest (extension): a batch of (vehicleId, position, time) observations as GeoJSON Points or GeoParquet, optionally gzip/deflate/br/zstd-compressed; each is appended as one instant"
       }
     },
+    "/collections/{cid}/coverage": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "summary": "OGC API - Coverages: the raster of one period of a raster collection, subset by bbox, datetime, subset and properties, as GeoTIFF or CoverageJSON"
+      }
+    },
     "/collections/{cid}/export": {
       "get": {
         "responses": {
@@ -534,6 +544,16 @@
           }
         },
         "summary": "Delete a temporal primitive value (member value sequence) by its 1-based id"
+      }
+    },
+    "/collections/{cid}/schema": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "summary": "OGC API - Coverages: the fields of a raster collection, one per band"
       }
     },
     "/conformance": {

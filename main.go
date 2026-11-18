@@ -202,6 +202,9 @@ func newMux() *http.ServeMux {
 	mux.HandleFunc("GET /collections/{cid}/items/{fid}", getItem)
 	mux.HandleFunc("POST /collections/{cid}/items", postItem)
 	mux.HandleFunc("GET /collections/{cid}/export", export) // lakehouse bulk feed (NDJSON | Parquet)
+	// OGC API - Coverages - Part 1: a raster collection's coverage and its fields
+	mux.HandleFunc("GET /collections/{cid}/coverage", getCoverage)
+	mux.HandleFunc("GET /collections/{cid}/schema", coverageSchema)
 	// extension (not in conformsTo): bulk ingest of a real-time fleet feed
 	mux.HandleFunc("POST /collections/{cid}/bulk", bulkIngest)
 	// OGC API – Moving Features sub-resources of a moving feature:
@@ -299,15 +302,19 @@ func landing(w http.ResponseWriter, r *http.Request) {
 			{"rel": "data", "href": "/collections", "type": "application/json"},
 		}})
 }
+
+// conformance writes the conformance declaration, beside #landing: the classes
+// of OGC API - Moving Features and Common the tier implements, and the
+// #coverageConformance classes of OGC API - Coverages its raster collections do.
 func conformance(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, 200, map[string]any{"conformsTo": []string{
+	writeJSON(w, 200, map[string]any{"conformsTo": append([]string{
 		"http://www.opengis.net/spec/ogcapi-movingfeatures-1/1.0/conf/common",
 		"http://www.opengis.net/spec/ogcapi-movingfeatures-1/1.0/conf/mf-collection",
 		"http://www.opengis.net/spec/ogcapi-movingfeatures-1/1.0/conf/movingfeatures",
 		"http://www.opengis.net/spec/ogcapi-movingfeatures-4/1.0/conf/cquery",
 		"http://www.opengis.net/spec/ogcapi-common-1/1.0/conf/core",
 		"http://www.opengis.net/spec/ogcapi-common-2/1.0/conf/collections",
-	}})
+	}, coverageConformance...)})
 }
 func listCollections(w http.ResponseWriter, r *http.Request) {
 	rows, err := db.Query(r.Context(), `SELECT id, title, description, item_type, crs FROM collections ORDER BY id`)
@@ -325,14 +332,18 @@ func listCollections(w http.ResponseWriter, r *http.Request) {
 			httpErr(w, 500, err.Error())
 			return
 		}
+		links := []map[string]string{
+			{"rel": "self", "href": "/collections/" + id},
+			{"rel": "items", "href": "/collections/" + id + "/items"},
+			{"rel": "enclosure", "href": "/collections/" + id + "/export", "type": "application/x-ndjson"},
+		}
+		if itemType != nil && *itemType == coverageItems {
+			links = coverageLinks(id)
+		}
 		cols = append(cols, map[string]any{
 			"id": id, "title": title, "description": desc, "itemType": itemType,
-			"crs": []string{"http://www.opengis.net/def/crs/EPSG/0/" + itoa(crs)},
-			"links": []map[string]string{
-				{"rel": "self", "href": "/collections/" + id},
-				{"rel": "items", "href": "/collections/" + id + "/items"},
-				{"rel": "enclosure", "href": "/collections/" + id + "/export", "type": "application/x-ndjson"},
-			},
+			"crs":   []string{"http://www.opengis.net/def/crs/EPSG/0/" + itoa(crs)},
+			"links": links,
 		})
 	}
 	writeJSON(w, 200, map[string]any{
@@ -340,8 +351,16 @@ func listCollections(w http.ResponseWriter, r *http.Request) {
 		"links":       []map[string]string{{"rel": "self", "href": "/collections"}},
 	})
 }
+
+// getCollection writes the description of one collection, as #listCollections
+// writes them all: a raster collection's through coverageCollection, a
+// collection of moving features's here.
 func getCollection(w http.ResponseWriter, r *http.Request) {
 	cid := r.PathValue("cid")
+	if src, ok := coverageMeta(r.Context(), cid); ok {
+		coverageCollection(w, r, cid, src)
+		return
+	}
 	tbl, srid, ok := collectionMeta(r.Context(), cid)
 	if !ok {
 		httpErr(w, 404, "collection not found")
@@ -434,6 +453,9 @@ func postCollection(w http.ResponseWriter, r *http.Request) {
 		// GeometryType is the temporal type the collection holds its moving
 		// features' temporal geometry in, named as MEOS names its SQL type.
 		GeometryType string `json:"temporalGeometryType"`
+		// Coverage registers a raster collection over an existing table
+		// instead, which registerCoverage reads and never creates.
+		Coverage *coverageBody `json:"coverage"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&c); err != nil || c.ID == "" {
 		httpErr(w, 400, "invalid Collection / missing id")
@@ -445,6 +467,29 @@ func postCollection(w http.ResponseWriter, r *http.Request) {
 	}
 	if _, _, exists := collectionMeta(r.Context(), c.ID); exists {
 		httpErr(w, 409, "collection already exists")
+		return
+	}
+	if c.Coverage != nil {
+		tx, err := db.Begin(r.Context())
+		if err != nil {
+			httpErr(w, 500, err.Error())
+			return
+		}
+		defer tx.Rollback(r.Context())
+		if err := ensureRegistry(r.Context(), tx); err != nil {
+			httpErr(w, 500, err.Error())
+			return
+		}
+		if err := registerCoverage(r.Context(), tx, c.ID, c.Title, c.Description, *c.Coverage); err != nil {
+			httpErr(w, errStatus(err, 400), err.Error())
+			return
+		}
+		if err := tx.Commit(r.Context()); err != nil {
+			httpErr(w, 500, err.Error())
+			return
+		}
+		w.Header().Set("Location", "/collections/"+c.ID)
+		writeJSON(w, 201, map[string]any{"message": "registered", "id": c.ID})
 		return
 	}
 	if c.ItemType == "" {
@@ -465,17 +510,7 @@ func postCollection(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(r.Context())
-	if _, err := tx.Exec(r.Context(),
-		`CREATE TABLE IF NOT EXISTS collections (id text PRIMARY KEY, title text,
-		   description text, item_type text, crs integer, geometry_type text)`); err != nil {
-		httpErr(w, 500, err.Error())
-		return
-	}
-	// A registry created before a collection stated its type has the other
-	// columns and not that one, and CREATE TABLE IF NOT EXISTS leaves such a
-	// table as it stands, as #ensureTPropTable finds for its value columns.
-	if _, err := tx.Exec(r.Context(),
-		"ALTER TABLE collections ADD COLUMN IF NOT EXISTS geometry_type text"); err != nil {
+	if err := ensureRegistry(r.Context(), tx); err != nil {
 		httpErr(w, 500, err.Error())
 		return
 	}
@@ -544,9 +579,14 @@ func deleteCollection(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(r.Context())
-	if _, err := tx.Exec(r.Context(), "DROP TABLE IF EXISTS "+ident(tbl)); err != nil {
-		httpErr(w, 500, err.Error())
-		return
+	// A raster collection's table is the deployment's, registered and never
+	// created by the tier, so removing the collection removes its registration
+	// alone.
+	if _, isCoverage := coverageMeta(r.Context(), cid); !isCoverage {
+		if _, err := tx.Exec(r.Context(), "DROP TABLE IF EXISTS "+ident(tbl)); err != nil {
+			httpErr(w, 500, err.Error())
+			return
+		}
 	}
 	if _, err := tx.Exec(r.Context(), "DELETE FROM collections WHERE id=$1", cid); err != nil {
 		httpErr(w, 500, err.Error())
@@ -1463,6 +1503,8 @@ func apiDoc(w http.ResponseWriter, r *http.Request) {
 			},
 			"/collections/{cid}/items/{fid}/tgsequence/queries/{qid}/stream": get("Moving-feature positions as Server-Sent Events (see api/streaming-asyncapi.yaml)"),
 			"/collections/{cid}/export":                                      get("Bulk lakehouse export: NDJSON, or ?format=parquet (WKB + bbox/time sidecar)"),
+			"/collections/{cid}/coverage":                                    get("OGC API - Coverages: the raster of one period of a raster collection, subset by bbox, datetime, subset and properties, as GeoTIFF or CoverageJSON"),
+			"/collections/{cid}/schema":                                      get("OGC API - Coverages: the fields of a raster collection, one per band"),
 			"/collections/{cid}/bulk":                                        map[string]any{"post": op("Bulk ingest (extension): a batch of (vehicleId, position, time) observations as GeoJSON Points or GeoParquet, optionally gzip/deflate/br/zstd-compressed; each is appended as one instant")},
 		},
 	}

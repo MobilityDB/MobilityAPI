@@ -376,7 +376,7 @@
             "description": "OK"
           }
         },
-        "summary": "Derived query on a member geometry: distance | velocity (acceleration → 501, not derivable for this motion model)"
+        "summary": "Derived query on a member geometry: distance | velocity | raster (acceleration → 501, not derivable for this motion model); raster reads the rasters of the raster collection `collection` along it, from band `band` (1 by default), kept to the values in `valueRange=lo,hi` when given"
       }
     },
     "/collections/{cid}/items/{fid}/tproperties": {

@@ -96,8 +96,8 @@ type serialization struct {
 var featureFunctions = []string{
 	"appendInstant", "asBinary", "asMFJSON", "atTime", "cumulativeLength",
 	"deleteTime", "eIntersects", "extent", "getTime", "merge", "numInstants",
-	"numSequences", "sequenceN", "setSRID", "speed", "trajectory", "transform",
-	"tsample",
+	"numSequences", "rasterTileValue", "rasterValue", "sequenceN", "setSRID",
+	"speed", "timeSpan", "trajectory", "transform", "tsample",
 }
 
 // typeFunctions answers, per temporal type, the featureFunctions MobilityDB

@@ -218,6 +218,8 @@ func coverageCollection(w http.ResponseWriter, r *http.Request, cid string, src 
 		"crs":        []string{"http://www.opengis.net/def/crs/EPSG/0/" + itoa(srid)},
 		"rasterType": src.Type,
 		"links":      coverageLinks(cid),
+		// The EDR queries the collection answers
+		"data_queries": edrDataQueries(cid),
 	}
 	if srid != 4326 {
 		col["storageCrs"] = "http://www.opengis.net/def/crs/EPSG/0/" + itoa(srid)
@@ -300,11 +302,16 @@ func jsonPixelType(p string) string {
 
 // coverageRequest is a GET /coverage request, its parameters read.
 type coverageRequest struct {
-	span   string    // the tstzspan datetime or a time subset selects, "" for none
-	bbox   []float64 // minLon, minLat, maxLon, maxLat in CRS84, nil for none
-	bands  []int     // the bands properties selects, nil for all
-	media  string    // the media type negotiated
-	writer string    // the function writing it
+	span string    // the tstzspan datetime or a time subset selects, "" for none
+	bbox []float64 // minLon, minLat, maxLon, maxLat in CRS84, nil for none
+	// region is the SQL of a clip region in the rasters' system, reading
+	// regionArg as $2 and the raster as r, "" for none; an EDR area or
+	// corridor gives one in place of bbox
+	region    string
+	regionArg any
+	bands     []int  // the bands properties selects, nil for all
+	media     string // the media type negotiated
+	writer    string // the function writing it
 }
 
 // subsetAxis matches one axis of a subset: its name and its interval or value.
@@ -602,7 +609,7 @@ func coverageData(ctx context.Context, src coverageSource, period string, cr cov
 	}
 	args := []any{period}
 	expr := "r"
-	if cr.bbox != nil || cr.bands != nil {
+	if cr.bbox != nil || cr.region != "" || cr.bands != nil {
 		if err := needRaster(src.Type, "clip"); err != nil {
 			return nil, nil, 0, err
 		}
@@ -610,6 +617,9 @@ func coverageData(ctx context.Context, src coverageSource, period string, cr cov
 		if cr.bbox != nil {
 			args = append(args, cr.bbox[0], cr.bbox[1], cr.bbox[2], cr.bbox[3])
 			geom = "CAST(transform(stbox(ST_MakeEnvelope($2, $3, $4, $5, 4326)), SRID(r)) AS geometry)"
+		} else if cr.region != "" {
+			args = append(args, cr.regionArg)
+			geom = cr.region
 		}
 		if cr.bands != nil {
 			ids := make([]string, len(cr.bands))

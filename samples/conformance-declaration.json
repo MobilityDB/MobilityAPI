@@ -11,7 +11,8 @@
     "https://www.opengis.net/spec/ogcapi-coverages-1/1.0/conf/subsetting-temporal",
     "https://www.opengis.net/spec/ogcapi-coverages-1/1.0/conf/field-selection",
     "https://www.opengis.net/spec/ogcapi-coverages-1/1.0/conf/geotiff",
-    "https://www.opengis.net/spec/ogcapi-coverages-1/1.0/conf/coveragejson"
+    "https://www.opengis.net/spec/ogcapi-coverages-1/1.0/conf/coveragejson",
+    "http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/core"
   ]
 }
 

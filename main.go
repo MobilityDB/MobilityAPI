@@ -205,6 +205,10 @@ func newMux() *http.ServeMux {
 	// OGC API - Coverages - Part 1: a raster collection's coverage and its fields
 	mux.HandleFunc("GET /collections/{cid}/coverage", getCoverage)
 	mux.HandleFunc("GET /collections/{cid}/schema", coverageSchema)
+	// OGC API - EDR: the queries of a raster collection
+	for _, q := range edrQueries {
+		mux.HandleFunc("GET /collections/{cid}/"+q.name, edrQuery(q.name))
+	}
 	// extension (not in conformsTo): bulk ingest of a real-time fleet feed
 	mux.HandleFunc("POST /collections/{cid}/bulk", bulkIngest)
 	// OGC API – Moving Features sub-resources of a moving feature:
@@ -314,7 +318,7 @@ func conformance(w http.ResponseWriter, r *http.Request) {
 		"http://www.opengis.net/spec/ogcapi-movingfeatures-4/1.0/conf/cquery",
 		"http://www.opengis.net/spec/ogcapi-common-1/1.0/conf/core",
 		"http://www.opengis.net/spec/ogcapi-common-2/1.0/conf/collections",
-	}, coverageConformance...)})
+	}, append(coverageConformance, edrConformance)...)})
 }
 func listCollections(w http.ResponseWriter, r *http.Request) {
 	rows, err := db.Query(r.Context(), `SELECT id, title, description, item_type, crs FROM collections ORDER BY id`)
@@ -1507,6 +1511,10 @@ func apiDoc(w http.ResponseWriter, r *http.Request) {
 			"/collections/{cid}/schema":                                      get("OGC API - Coverages: the fields of a raster collection, one per band"),
 			"/collections/{cid}/bulk":                                        map[string]any{"post": op("Bulk ingest (extension): a batch of (vehicleId, position, time) observations as GeoJSON Points or GeoParquet, optionally gzip/deflate/br/zstd-compressed; each is appended as one instant")},
 		},
+	}
+	paths := doc["paths"].(map[string]any)
+	for p, item := range edrPaths() {
+		paths[p] = item
 	}
 	w.Header().Set("Content-Type", "application/vnd.oai.openapi+json;version=3.0")
 	w.WriteHeader(200)

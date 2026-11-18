@@ -1188,7 +1188,8 @@ func tgSequence(w http.ResponseWriter, r *http.Request) {
 }
 
 // tgSequenceQuery serves the OGC TemporalGeometry derived queries. distance and
-// velocity are exact MobilityDB functions; acceleration is NOT_IMPLEMENTED
+// velocity are exact MobilityDB functions; raster, a MobilityAPI query type, is
+// the values the rasters of a raster collection give along it (#rasterQuery); acceleration is NOT_IMPLEMENTED
 // because with linearly interpolated position the speed is piecewise-constant,
 // so its derivative is zero within each segment and undefined at the vertices.
 func tgSequenceQuery(w http.ResponseWriter, r *http.Request) {
@@ -1197,7 +1198,7 @@ func tgSequenceQuery(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, 501, "acceleration is not derivable: linearly interpolated position gives a piecewise-constant (Step) speed, whose derivative is zero within each segment and undefined at the vertices")
 		return
 	}
-	if q != "velocity" && q != "distance" {
+	if q != "velocity" && q != "distance" && q != "raster" {
 		httpErr(w, 404, "unknown query type: "+q)
 		return
 	}
@@ -1228,6 +1229,10 @@ func tgSequenceQuery(w http.ResponseWriter, r *http.Request) {
 	}
 	if nseq == nil || tg > *nseq {
 		httpErr(w, 404, "no temporal geometry #"+itoa(tg)+" for this feature")
+		return
+	}
+	if q == "raster" {
+		writeRasterQuery(w, r, tbl, tg)
 		return
 	}
 	// The query is the function its expression applies to trip, defined for a
@@ -1468,7 +1473,7 @@ func apiDoc(w http.ResponseWriter, r *http.Request) {
 			"/collections/{cid}/items/{fid}/tgsequence/{tgid}": map[string]any{
 				"delete": op("Delete a temporal primitive geometry (member sequence) by id"),
 			},
-			"/collections/{cid}/items/{fid}/tgsequence/{tgid}/{qtype}": get("Derived query on a member geometry: distance | velocity (acceleration → 501, not derivable for this motion model)"),
+			"/collections/{cid}/items/{fid}/tgsequence/{tgid}/{qtype}": get("Derived query on a member geometry: distance | velocity | raster (acceleration → 501, not derivable for this motion model); raster reads the rasters of the raster collection `collection` along it, from band `band` (1 by default), kept to the values in `valueRange=lo,hi` when given"),
 			"/collections/{cid}/items/{fid}/tproperties": map[string]any{
 				// The document this route answers carries each property's name, type,
 				// unit and links, and no valueSequence — which `temporalProperty`

@@ -26,7 +26,10 @@ import (
 )
 
 // The conformance class of EDR the tier declares: the core, which
-// /req/core/conformance names; the queries carry no class of their own in 1.1.
+// /req/core/conformance names. The class queries of 1.1 holds eight queries, each
+// one a server MAY answer, and the tier answers four; the class covjson of 1.1
+// names CoverageJSON application/prs.coverage+json, where the tier writes
+// application/vnd.cov+json, the type OGC CoverageJSON (OGC 21-069r2) defines.
 const edrConformance = "http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/core"
 
 // The queries a raster collection answers, with the WKT geometry each reads.

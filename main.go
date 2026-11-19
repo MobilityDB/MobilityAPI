@@ -190,7 +190,7 @@ const (
 	confMovingFeatures    = "http://www.opengis.net/spec/ogcapi-movingfeatures-1/1.0/conf/movingfeatures"
 	confCQuery            = "http://www.opengis.net/spec/ogcapi-movingfeatures-4/1.0/conf/cquery"
 	confCommonCore        = "http://www.opengis.net/spec/ogcapi-common-1/1.0/conf/core"
-	confCommonCollections = "http://www.opengis.net/spec/ogcapi-common-2/1.0/conf/collections"
+	confCommonCollections = "https://www.opengis.net/spec/ogcapi-common-2/1.0/conf/collections"
 )
 
 // extension marks a route that is a requirement of no class the tier declares:
@@ -374,10 +374,30 @@ func landing(w http.ResponseWriter, r *http.Request) {
 // conformance writes the conformance declaration, beside #landing: the classes
 // of OGC API - Moving Features and Common the tier implements, and the
 // #coverageConformance classes of OGC API - Coverages its raster collections do.
+//
+// Each class is named as its standard publishes it. OGC API - Common - Part 2
+// and the Coverages draft publish their identifiers under https:// in their
+// text, while their OpenAPI documents and OGC's test suite (ets-ogcapi-
+// coverages10) write them under http://, the scheme OGC's naming policy (OGC
+// 10-103r1) roots specification elements at. A reader compares identifiers as
+// strings, so a class published under https:// is declared under both.
 func conformance(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, 200, map[string]any{"conformsTo": append([]string{
+	writeJSON(w, 200, map[string]any{"conformsTo": conformsTo()})
+}
+
+// conformsTo answers the identifiers the conformance declaration lists.
+func conformsTo() []string {
+	classes := append([]string{
 		confMFCommon, confMFCollection, confMovingFeatures, confCQuery, confCommonCore, confCommonCollections,
-	}, append(coverageConformance, edrConformance)...)})
+	}, append(coverageConformance, edrConformance)...)
+	var out []string
+	for _, c := range classes {
+		out = append(out, c)
+		if rest, ok := strings.CutPrefix(c, "https://"); ok {
+			out = append(out, "http://"+rest)
+		}
+	}
+	return out
 }
 func listCollections(w http.ResponseWriter, r *http.Request) {
 	rows, err := db.Query(r.Context(), `SELECT id, title, description, item_type, crs FROM collections ORDER BY id`)

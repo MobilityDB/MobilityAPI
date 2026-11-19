@@ -2,13 +2,13 @@
   {
     "method": "GET",
     "path": "/",
-    "conformanceClass": "http://www.opengis.net/spec/ogcapi-common-1/1.0/conf/core",
+    "conformanceClass": "http://www.opengis.net/spec/ogcapi-common-1/1.0/conf/landing-page",
     "functions": []
   },
   {
     "method": "GET",
     "path": "/api",
-    "conformanceClass": "http://www.opengis.net/spec/ogcapi-common-1/1.0/conf/core",
+    "conformanceClass": "http://www.opengis.net/spec/ogcapi-common-1/1.0/conf/landing-page",
     "functions": []
   },
   {
@@ -390,7 +390,7 @@
   {
     "method": "GET",
     "path": "/conformance",
-    "conformanceClass": "http://www.opengis.net/spec/ogcapi-common-1/1.0/conf/core",
+    "conformanceClass": "http://www.opengis.net/spec/ogcapi-common-1/1.0/conf/landing-page",
     "functions": []
   },
   {

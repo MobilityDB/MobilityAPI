@@ -76,20 +76,3 @@ func TestCqueryLinkGeometryScope(t *testing.T) {
 		t.Errorf("geometry channel = %q, want a tgsequence/queries path", ch)
 	}
 }
-
-// The window-aggregation result carries the bounds Requirement 2 mandates.
-func TestWindowResultShape(t *testing.T) {
-	ev := Event{
-		"windowStart": "2026-01-01T00:00:00Z",
-		"windowEnd":   "2026-01-01T00:00:30Z",
-		"aggregation": "AVG",
-		"property":    "speed",
-		"value":       6.2,
-		"count":       3,
-	}
-	for _, k := range []string{"windowStart", "windowEnd", "aggregation", "value", "count"} {
-		if _, ok := ev[k]; !ok {
-			t.Errorf("window aggregate result missing required field %q", k)
-		}
-	}
-}

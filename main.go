@@ -182,66 +182,130 @@ func main() {
 	log.Println("shut down")
 }
 
-// newMux is the routing table of the tier: every path the service serves,
-// with the method each one accepts. main and the conformance tests share it,
-// so a test exercises the routing the service runs.
+// The conformance classes the tier declares at /conformance, beside
+// #coverageConformance and #edrConformance.
+const (
+	confMFCommon          = "http://www.opengis.net/spec/ogcapi-movingfeatures-1/1.0/conf/common"
+	confMFCollection      = "http://www.opengis.net/spec/ogcapi-movingfeatures-1/1.0/conf/mf-collection"
+	confMovingFeatures    = "http://www.opengis.net/spec/ogcapi-movingfeatures-1/1.0/conf/movingfeatures"
+	confCQuery            = "http://www.opengis.net/spec/ogcapi-movingfeatures-4/1.0/conf/cquery"
+	confCommonCore        = "http://www.opengis.net/spec/ogcapi-common-1/1.0/conf/core"
+	confCommonCollections = "http://www.opengis.net/spec/ogcapi-common-2/1.0/conf/collections"
+)
+
+// extension marks a route that is a requirement of no class the tier declares:
+// a MobilityAPI extension, which the API definition names as one and which
+// changes no answer a declared class defines.
+const extension = ""
+
+// route is one operation the service serves: the method and path it is routed
+// by, its handler, and the declared conformance class it is a requirement of,
+// or #extension.
+type route struct {
+	method, path string
+	handler      http.HandlerFunc
+	class        string
+}
+
+// routeTable is every operation the service serves. newMux routes by it and
+// apiDoc marks each operation of the API definition by it, so what is served,
+// what is described and what each route answers to are one list.
+func routeTable() []route {
+	rs := []route{
+		{"GET", "/health", health, extension},
+		{"GET", "/", landing, confCommonCore},
+		{"GET", "/api", apiDoc, confCommonCore},
+		{"GET", "/conformance", conformance, confCommonCore},
+		{"GET", "/collections", listCollections, confMFCollection},
+		{"POST", "/collections", postCollection, confMFCollection},
+		{"GET", "/collections/{cid}", getCollection, confMFCollection},
+		{"PUT", "/collections/{cid}", putCollection, confMFCollection},
+		{"DELETE", "/collections/{cid}", deleteCollection, confMFCollection},
+		// The animated map and the fleet dashboard read these two.
+		{"GET", "/collections/{cid}/trajectories", trajectories, extension},
+		{"GET", "/collections/{cid}/timeseries", timeseries, extension},
+		{"GET", "/collections/{cid}/items", streamItems, confMovingFeatures},
+		{"POST", "/collections/{cid}/items", postItem, confMovingFeatures},
+		{"GET", "/collections/{cid}/items/{fid}", getItem, confMovingFeatures},
+		{"PUT", "/collections/{cid}/items/{fid}", putItem, extension},
+		{"DELETE", "/collections/{cid}/items/{fid}", deleteItem, confMovingFeatures},
+		// The lakehouse bulk feed (NDJSON | Parquet) and the bulk ingest of a
+		// real-time fleet feed.
+		{"GET", "/collections/{cid}/export", export, extension},
+		{"POST", "/collections/{cid}/bulk", bulkIngest, extension},
+		// OGC API - Coverages - Part 1: a raster collection's coverage and its fields.
+		{"GET", "/collections/{cid}/coverage", getCoverage, coverageConfBase + "core"},
+		{"GET", "/collections/{cid}/schema", coverageSchema, coverageConfBase + "core"},
+		// The sub-resources of a moving feature.
+		{"GET", "/collections/{cid}/items/{fid}/tgsequence", tgSequence, confMovingFeatures},
+		{"POST", "/collections/{cid}/items/{fid}/tgsequence", postTgSequence, confMovingFeatures},
+		{"DELETE", "/collections/{cid}/items/{fid}/tgsequence/{tgid}", deleteTgSequence, confMovingFeatures},
+		{"GET", "/collections/{cid}/items/{fid}/tgsequence/{tgid}/{qtype}", tgSequenceQuery, confMovingFeatures},
+		{"GET", "/collections/{cid}/items/{fid}/tproperties", listTProperties, confMovingFeatures},
+		{"POST", "/collections/{cid}/items/{fid}/tproperties", postTProperties, confMovingFeatures},
+		{"GET", "/collections/{cid}/items/{fid}/tproperties/{pname}", getTProperty, confMovingFeatures},
+		{"POST", "/collections/{cid}/items/{fid}/tproperties/{pname}", postTPropertyValues, confMovingFeatures},
+		{"DELETE", "/collections/{cid}/items/{fid}/tproperties/{pname}", deleteTProperty, confMovingFeatures},
+		{"DELETE", "/collections/{cid}/items/{fid}/tproperties/{pname}/{tvid}", deleteTPropertyValue, confMovingFeatures},
+		// MF Part 4 (Stream Extension): continuous queries on a temporal property,
+		// their results delivered over Server-Sent Events.
+		{"POST", "/collections/{cid}/items/{fid}/tproperties/{pname}/queries", postQuery, confCQuery},
+		{"GET", "/collections/{cid}/items/{fid}/tproperties/{pname}/queries", listQueries, confCQuery},
+		{"GET", "/collections/{cid}/items/{fid}/tproperties/{pname}/queries/{qid}", getQuery, confCQuery},
+		{"GET", "/collections/{cid}/items/{fid}/tproperties/{pname}/queries/{qid}/stream", streamQuery, confCQuery},
+		{"DELETE", "/collections/{cid}/items/{fid}/tproperties/{pname}/queries/{qid}", deleteQuery, confCQuery},
+		// Live ingestion: a producer pushes records the live queries process.
+		{"POST", "/collections/{cid}/items/{fid}/tproperties/{pname}/ingest", ingestProperty, extension},
+		// A continuous query streaming the moving feature's position, the feed of
+		// an animated map, which CONFORMANCE.md states is no Part 4 requirement.
+		{"POST", "/collections/{cid}/items/{fid}/tgsequence/queries", postGeometryQuery, extension},
+		{"GET", "/collections/{cid}/items/{fid}/tgsequence/queries", listGeometryQueries, extension},
+		{"GET", "/collections/{cid}/items/{fid}/tgsequence/queries/{qid}", getQuery, extension},
+		{"GET", "/collections/{cid}/items/{fid}/tgsequence/queries/{qid}/stream", streamQuery, extension},
+		{"DELETE", "/collections/{cid}/items/{fid}/tgsequence/queries/{qid}", deleteQuery, extension},
+	}
+	// OGC API - EDR: the queries of a raster collection.
+	for _, q := range edrQueries {
+		rs = append(rs, route{"GET", "/collections/{cid}/" + q.name, edrQuery(q.name), edrConformance})
+	}
+	return rs
+}
+
+// The OpenAPI specification extensions by which the API definition marks an
+// operation: the declared conformance class it is a requirement of, or that it
+// is a MobilityAPI extension.
+const (
+	xConformanceClass = "x-conformance-class"
+	xExtension        = "x-mobilityapi-extension"
+)
+
+// markOperations marks every operation of the API definition's paths with the
+// class #routeTable gives its route, or as an extension.
+func markOperations(paths map[string]any) {
+	for _, r := range routeTable() {
+		item, _ := paths[r.path].(map[string]any)
+		op, _ := item[strings.ToLower(r.method)].(map[string]any)
+		if op == nil {
+			continue
+		}
+		if r.class == extension {
+			op[xExtension] = true
+		} else {
+			op[xConformanceClass] = r.class
+		}
+	}
+}
+
+// health answers that the service is up.
+func health(w http.ResponseWriter, r *http.Request) { writeRaw(w, 200, `{"status":"ok"}`) }
+
+// newMux is the routing table of the tier, built from #routeTable. main and the
+// conformance tests share it, so a test exercises the routing the service runs.
 func newMux() *http.ServeMux {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) { writeRaw(w, 200, `{"status":"ok"}`) })
-	mux.HandleFunc("GET /", landing)
-	mux.HandleFunc("GET /api", apiDoc)
-	mux.HandleFunc("GET /conformance", conformance)
-	mux.HandleFunc("GET /collections", listCollections)
-	mux.HandleFunc("POST /collections", postCollection)
-	mux.HandleFunc("GET /collections/{cid}", getCollection)
-	mux.HandleFunc("PUT /collections/{cid}", putCollection)
-	mux.HandleFunc("DELETE /collections/{cid}", deleteCollection)
-	mux.HandleFunc("GET /collections/{cid}/trajectories", trajectories)
-	mux.HandleFunc("GET /collections/{cid}/timeseries", timeseries)
-	mux.HandleFunc("GET /collections/{cid}/items", streamItems)
-	mux.HandleFunc("GET /collections/{cid}/items/{fid}", getItem)
-	mux.HandleFunc("POST /collections/{cid}/items", postItem)
-	mux.HandleFunc("GET /collections/{cid}/export", export) // lakehouse bulk feed (NDJSON | Parquet)
-	// OGC API - Coverages - Part 1: a raster collection's coverage and its fields
-	mux.HandleFunc("GET /collections/{cid}/coverage", getCoverage)
-	mux.HandleFunc("GET /collections/{cid}/schema", coverageSchema)
-	// OGC API - EDR: the queries of a raster collection
-	for _, q := range edrQueries {
-		mux.HandleFunc("GET /collections/{cid}/"+q.name, edrQuery(q.name))
+	for _, r := range routeTable() {
+		mux.HandleFunc(r.method+" "+r.path, r.handler)
 	}
-	// extension (not in conformsTo): bulk ingest of a real-time fleet feed
-	mux.HandleFunc("POST /collections/{cid}/bulk", bulkIngest)
-	// OGC API – Moving Features sub-resources of a moving feature:
-	mux.HandleFunc("GET /collections/{cid}/items/{fid}/tgsequence", tgSequence)
-	mux.HandleFunc("GET /collections/{cid}/items/{fid}/tgsequence/{tgid}/{qtype}", tgSequenceQuery)
-	mux.HandleFunc("GET /collections/{cid}/items/{fid}/tproperties", listTProperties)
-	mux.HandleFunc("GET /collections/{cid}/items/{fid}/tproperties/{pname}", getTProperty)
-	// writes: replace / delete a feature, append a temporally-disjoint sub-trajectory
-	mux.HandleFunc("PUT /collections/{cid}/items/{fid}", putItem)
-	mux.HandleFunc("DELETE /collections/{cid}/items/{fid}", deleteItem)
-	mux.HandleFunc("POST /collections/{cid}/items/{fid}/tgsequence", postTgSequence)
-	// temporal properties are user-supplied, stored, time-varying attributes
-	mux.HandleFunc("POST /collections/{cid}/items/{fid}/tproperties", postTProperties)
-	mux.HandleFunc("POST /collections/{cid}/items/{fid}/tproperties/{pname}", postTPropertyValues)
-	mux.HandleFunc("DELETE /collections/{cid}/items/{fid}/tproperties/{pname}", deleteTProperty)
-	mux.HandleFunc("DELETE /collections/{cid}/items/{fid}/tproperties/{pname}/{tvid}", deleteTPropertyValue)
-	mux.HandleFunc("DELETE /collections/{cid}/items/{fid}/tgsequence/{tgid}", deleteTgSequence)
-	// MF Part 4 (Stream Extension): continuous queries on a temporal property,
-	// delivered over Server-Sent Events.
-	mux.HandleFunc("POST /collections/{cid}/items/{fid}/tproperties/{pname}/queries", postQuery)
-	mux.HandleFunc("GET /collections/{cid}/items/{fid}/tproperties/{pname}/queries", listQueries)
-	mux.HandleFunc("GET /collections/{cid}/items/{fid}/tproperties/{pname}/queries/{qid}", getQuery)
-	mux.HandleFunc("GET /collections/{cid}/items/{fid}/tproperties/{pname}/queries/{qid}/stream", streamQuery)
-	mux.HandleFunc("DELETE /collections/{cid}/items/{fid}/tproperties/{pname}/queries/{qid}", deleteQuery)
-	// live ingestion: a producer pushes records that live queries process in real time
-	mux.HandleFunc("POST /collections/{cid}/items/{fid}/tproperties/{pname}/ingest", ingestProperty)
-	// MF Part 4: a continuous query that streams the moving feature's position
-	// (the temporal geometry), the feed for an animated map.
-	mux.HandleFunc("POST /collections/{cid}/items/{fid}/tgsequence/queries", postGeometryQuery)
-	mux.HandleFunc("GET /collections/{cid}/items/{fid}/tgsequence/queries", listGeometryQueries)
-	mux.HandleFunc("GET /collections/{cid}/items/{fid}/tgsequence/queries/{qid}", getQuery)
-	mux.HandleFunc("GET /collections/{cid}/items/{fid}/tgsequence/queries/{qid}/stream", streamQuery)
-	mux.HandleFunc("DELETE /collections/{cid}/items/{fid}/tgsequence/queries/{qid}", deleteQuery)
 	return mux
 }
 
@@ -312,12 +376,7 @@ func landing(w http.ResponseWriter, r *http.Request) {
 // #coverageConformance classes of OGC API - Coverages its raster collections do.
 func conformance(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"conformsTo": append([]string{
-		"http://www.opengis.net/spec/ogcapi-movingfeatures-1/1.0/conf/common",
-		"http://www.opengis.net/spec/ogcapi-movingfeatures-1/1.0/conf/mf-collection",
-		"http://www.opengis.net/spec/ogcapi-movingfeatures-1/1.0/conf/movingfeatures",
-		"http://www.opengis.net/spec/ogcapi-movingfeatures-4/1.0/conf/cquery",
-		"http://www.opengis.net/spec/ogcapi-common-1/1.0/conf/core",
-		"http://www.opengis.net/spec/ogcapi-common-2/1.0/conf/collections",
+		confMFCommon, confMFCollection, confMovingFeatures, confCQuery, confCommonCore, confCommonCollections,
 	}, append(coverageConformance, edrConformance)...)})
 }
 func listCollections(w http.ResponseWriter, r *http.Request) {
@@ -1471,9 +1530,12 @@ func apiDoc(w http.ResponseWriter, r *http.Request) {
 		"openapi": "3.0.3",
 		"info":    map[string]any{"title": "MobilityAPI-go", "version": "1.0.0", "description": "OGC API – Moving Features over MobilityDB"},
 		"paths": map[string]any{
-			"/":            get("Landing page"),
-			"/api":         get("API definition"),
-			"/conformance": get("Conformance declaration"),
+			"/health":                         get("Liveness: answers {\"status\":\"ok\"} while the service is up"),
+			"/collections/{cid}/trajectories": get("Every feature's trajectory for animated rendering, sampled to ~sample seconds (180 by default), in WGS84, as {trips, tmin, tmax}"),
+			"/collections/{cid}/timeseries":   get("The fleet-wide average of the speed property, grouped by ship type, over step-second buckets"),
+			"/":                               get("Landing page"),
+			"/api":                            get("API definition"),
+			"/conformance":                    get("Conformance declaration"),
 			"/collections": map[string]any{
 				"get":  withParams(op("Moving feature collections"), limitParam),
 				"post": op("Register a new collection"),
@@ -1549,6 +1611,7 @@ func apiDoc(w http.ResponseWriter, r *http.Request) {
 	for p, item := range edrPaths() {
 		paths[p] = item
 	}
+	markOperations(paths)
 	w.Header().Set("Content-Type", "application/vnd.oai.openapi+json;version=3.0")
 	w.WriteHeader(200)
 	json.NewEncoder(w).Encode(doc)

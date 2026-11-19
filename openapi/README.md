@@ -112,3 +112,16 @@ Measured against the resolved schema, under either reading of `format`:
 The resolutions do narrow what the schema admits, and the test states each narrowing as a case: a
 scalar `values` (2), a three-character unit that is no common code such as `deg` (3), and an
 instant that is no RFC 3339 date-time (5).
+
+# The OpenAPI 3.0 schema
+
+`oas-3.0-schema.json` is the JSON Schema the OpenAPI Initiative publishes for OpenAPI 3.0.x
+documents, vendored byte for byte:
+
+    URL     https://spec.openapis.org/oas/3.0/schema/2024-10-18
+    bytes   35755
+    sha256  2385f5bbb8c37878daae73baeabe7f34b2f022a4a8c049329ee61f71796f039c
+
+`ats_common_test.go` validates the API definition the tier writes against it, as abstract
+test `/conf/landing-page/api-definition-success` of OGC API — Common — Part 1 asks. The copy
+is never edited.

@@ -294,7 +294,10 @@ func edrPaths() map[string]any {
 	for _, q := range edrQueries {
 		out["/collections/{cid}/"+q.name] = map[string]any{"get": map[string]any{"summary": fmt.Sprintf(
 			"OGC API - EDR: the %s query over a raster collection, coords a WKT %s, answered in CoverageJSON",
-			q.name, q.geometry)}}
+			q.name, q.geometry),
+			// Every operation of an OpenAPI 3.0 document states its responses, as
+			// the operations #apiDoc writes do.
+			"responses": map[string]any{"200": map[string]any{"description": "OK"}}}}
 	}
 	return out
 }

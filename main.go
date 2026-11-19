@@ -190,8 +190,13 @@ const (
 	confMovingFeatures    = "http://www.opengis.net/spec/ogcapi-movingfeatures-1/1.0/conf/movingfeatures"
 	confCQuery            = "http://www.opengis.net/spec/ogcapi-movingfeatures-4/1.0/conf/cquery"
 	confCommonCore        = "http://www.opengis.net/spec/ogcapi-common-1/1.0/conf/core"
+	confCommonLanding     = "http://www.opengis.net/spec/ogcapi-common-1/1.0/conf/landing-page"
 	confCommonCollections = "https://www.opengis.net/spec/ogcapi-common-2/1.0/conf/collections"
 )
+
+// relConformance is the relation type OGC API - Common - Part 1 gives the link
+// from the landing page to the conformance declaration.
+const relConformance = "http://www.opengis.net/def/rel/ogc/1.0/conformance"
 
 // extension marks a route that is a requirement of no class the tier declares:
 // a MobilityAPI extension, which the API definition names as one and which
@@ -213,9 +218,9 @@ type route struct {
 func routeTable() []route {
 	rs := []route{
 		{"GET", "/health", health, extension},
-		{"GET", "/", landing, confCommonCore},
-		{"GET", "/api", apiDoc, confCommonCore},
-		{"GET", "/conformance", conformance, confCommonCore},
+		{"GET", "/", landing, confCommonLanding},
+		{"GET", "/api", apiDoc, confCommonLanding},
+		{"GET", "/conformance", conformance, confCommonLanding},
 		{"GET", "/collections", listCollections, confMFCollection},
 		{"POST", "/collections", postCollection, confMFCollection},
 		{"GET", "/collections/{cid}", getCollection, confMFCollection},
@@ -360,6 +365,12 @@ func ident(s string) string { return `"` + strings.ReplaceAll(s, `"`, `""`) + `"
 // be parameterised): a collection id must be a plain SQL identifier.
 var validID = regexp.MustCompile(`^[a-z_][a-z0-9_]*$`)
 
+// landing writes the landing page. The conformance declaration is linked under
+// both relation types the standards require of it: conformance, as OGC API -
+// Features - Part 1 requires (/req/core/root-success), on which Moving Features
+// builds, and relConformance, as OGC API - Common - Part 1 requires
+// (/req/landing-page/root-success). A client compares a relation type as a
+// string, so each finds the link it looks for.
 func landing(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{
 		"title": "MobilityAPI-go", "description": "OGC API – Moving Features over MobilityDB",
@@ -367,6 +378,7 @@ func landing(w http.ResponseWriter, r *http.Request) {
 			{"rel": "self", "href": "/", "type": "application/json"},
 			{"rel": "service-desc", "href": "/api", "type": "application/vnd.oai.openapi+json;version=3.0"},
 			{"rel": "conformance", "href": "/conformance", "type": "application/json"},
+			{"rel": relConformance, "href": "/conformance", "type": "application/json"},
 			{"rel": "data", "href": "/collections", "type": "application/json"},
 		}})
 }
@@ -388,7 +400,8 @@ func conformance(w http.ResponseWriter, r *http.Request) {
 // conformsTo answers the identifiers the conformance declaration lists.
 func conformsTo() []string {
 	classes := append([]string{
-		confMFCommon, confMFCollection, confMovingFeatures, confCQuery, confCommonCore, confCommonCollections,
+		confMFCommon, confMFCollection, confMovingFeatures, confCQuery, confCommonCore, confCommonLanding,
+		confCommonCollections,
 	}, append(coverageConformance, edrConformance)...)
 	var out []string
 	for _, c := range classes {

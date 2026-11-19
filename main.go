@@ -900,9 +900,9 @@ func getItem(w http.ResponseWriter, r *http.Request) {
 // function's true interpolation — they do not coerce it.
 type propSpec struct{ expr, uom, desc string }
 
-// The unit is the OGC register URI for the UCUM code, which is the form
-// /components/schemas/temporalProperty admits without ambiguity — its other branch
-// takes a string of exactly three characters, which the metre's own symbol is not.
+// The unit is the OGC register URI for the UCUM code, which /components/schemas/
+// temporalProperty admits under its URI branch alone: a URI holds a ':', which no
+// UN/CEFACT common code (the three-character branch, KMH, MTR, MQS) does.
 // It is also the shape the tier already names a temporal reference system by.
 var tProps = map[string]propSpec{
 	"velocity": {"speed(trip)", uomURI + "m_s-1", "Speed over ground (velocity magnitude), a piecewise-constant function of the trajectory."},
@@ -912,15 +912,6 @@ var tProps = map[string]propSpec{
 // uomURI is the OGC unit-of-measure register, keyed by UCUM code.
 const uomURI = "http://www.opengis.net/def/uom/UCUM/0/"
 
-// conformantForm reports whether a unit of measure is one a temporalProperty document
-// can carry: absent, an absolute URI, or a string of exactly three characters, which is
-// the whole of what /components/schemas/temporalProperty admits for `form`.
-//
-// ⛔ IT IS CHECKED ON THE WAY IN, not only on the way out. A unit stored here that no
-// conformant document can express would be published unconformantly or silently dropped,
-// and either is worse than refusing it at the point where a caller can still fix it. The
-// register at uomURI names the units whose symbols the three-character branch excludes —
-// the metre among them.
 // propForm reads a temporal property body's unit of measure under either spelling.
 func propForm(p map[string]any) string {
 	if u := strOf(p["form"]); u != "" {
@@ -929,6 +920,15 @@ func propForm(p map[string]any) string {
 	return strOf(p["unitOfMeasure"])
 }
 
+// conformantForm reports whether a unit of measure is one a temporalProperty document
+// can carry: absent, an absolute URI, or a string of exactly three characters, which is
+// the whole of what /components/schemas/temporalProperty admits for `form`.
+//
+// ⛔ IT IS CHECKED ON THE WAY IN, not only on the way out. A unit stored here that no
+// conformant document can express would be published unconformantly or silently dropped,
+// and either is worse than refusing it at the point where a caller can still fix it. A
+// unit whose UCUM symbol is not three characters, such as the metre's m, is stated by the
+// register at uomURI, or by its UN/CEFACT common code (MTR) in the three-character branch.
 func conformantForm(uom string) bool {
 	if uom == "" || len(uom) == 3 {
 		return true

@@ -87,7 +87,10 @@ func packageSource(t *testing.T) map[string]ast.Node {
 	fset := token.NewFileSet()
 	out := map[string]ast.Node{}
 	for _, f := range files {
-		if strings.HasSuffix(f, "_test.go") {
+		// The generated tables are the catalog a handler checks a type against
+		// (typeHas), naming every function by bare name; they are not code a route
+		// runs, so the walk reads them as the catalog and never as a handler's.
+		if strings.HasSuffix(f, "_test.go") || strings.HasSuffix(f, "_gen.go") {
 			continue
 		}
 		file, err := parser.ParseFile(fset, f, nil, parser.SkipObjectResolution)
@@ -138,20 +141,75 @@ func handlerName(h any) string {
 // closureName matches the name Go gives an anonymous function, func1, func2, ...
 var closureName = regexp.MustCompile(`^func\d+$`)
 
-// reachedFunctions answers the declared functions the SQL literals reachable from
-// the function root apply, following the package functions and variables it
-// names.
+// catalogGates are the functions by which a handler checks that MobilityDB
+// declares a function over a type before applying it (rule 4 of the plan: a
+// function MobilityDB declares over no type of the collection is refused by
+// name). A handler that picks a function by name at run time, as the raster query
+// picks rasterValue or rasterTileValue, passes the name through one of them.
+var catalogGates = map[string]bool{"typeHas": true, "boxHas": true, "rasterHas": true, "needRaster": true}
+
+// callsGate reports whether a declaration calls a catalog gate.
+func callsGate(n ast.Node) bool {
+	found := false
+	ast.Inspect(n, func(x ast.Node) bool {
+		if c, ok := x.(*ast.CallExpr); ok {
+			if id, ok := c.Fun.(*ast.Ident); ok && catalogGates[id.Name] {
+				found = true
+			}
+		}
+		return !found
+	})
+	return found
+}
+
+// notAFunction are the bare names that name something other than a function the
+// handler applies, though MobilityDB declares a function of the same name: a
+// type (raster, stbox, tgeompoint), read as the type a handler compares, and a
+// resource of the service (the EDR query trajectory), read as the path segment
+// the route table gives it. Both sets are read from the code, not listed here.
+var notAFunction = func() map[string]bool {
+	out := map[string]bool{}
+	for _, t := range temporalTypes {
+		out[strings.ToLower(t.Name)] = true
+	}
+	for _, t := range rasterTypes {
+		out[strings.ToLower(t.Name)] = true
+	}
+	for b := range boxFunctions {
+		out[strings.ToLower(b)] = true
+	}
+	for _, r := range routeTable() {
+		for _, seg := range strings.Split(r.path, "/") {
+			if seg != "" && !strings.HasPrefix(seg, "{") {
+				out[strings.ToLower(seg)] = true
+			}
+		}
+	}
+	return out
+}()
+
+// reachedFunctions answers the declared functions reachable from the function
+// root, following the package functions and variables it names. A function is
+// reached when a string literal calls it (name followed by its parenthesis), or,
+// below a function that calls a catalog gate, when a string literal is its bare
+// name: the name the gate checks and the handler then applies, as the raster
+// query applies rasterValue and the coverage its negotiated writer.
 func reachedFunctions(decls map[string]ast.Node, declared map[string]string, root string) []string {
 	seen := map[string]bool{}
 	found := map[string]bool{}
-	var visit func(name string)
-	visit = func(name string) {
-		fd, ok := decls[name]
-		if !ok || seen[name] {
+	var visit func(name string, gatedCaller bool)
+	visit = func(name string, gatedCaller bool) {
+		node, ok := decls[name]
+		key := name + "/" + strconv.FormatBool(gatedCaller)
+		if !ok || seen[key] {
 			return
 		}
-		seen[name] = true
-		ast.Inspect(fd, func(n ast.Node) bool {
+		seen[key] = true
+		gated := gatedCaller
+		if _, isFunc := node.(*ast.FuncDecl); isFunc {
+			gated = gatedCaller || callsGate(node)
+		}
+		ast.Inspect(node, func(n ast.Node) bool {
 			switch v := n.(type) {
 			case *ast.BasicLit:
 				if v.Kind == token.STRING {
@@ -164,20 +222,25 @@ func reachedFunctions(decls map[string]ast.Node, declared map[string]string, roo
 							found[spelled] = true
 						}
 					}
+					if gated && !notAFunction[strings.ToLower(s)] {
+						if spelled, ok := declared[strings.ToLower(s)]; ok {
+							found[spelled] = true
+						}
+					}
 				}
 			case *ast.Ident:
-				// A package function or variable named here. The
-				// route table and the router name every handler and apply none, so
-				// the walk does not enter them: the API definition reads the table
-				// to mark its operations and applies nothing the routes apply.
+				// A package function or variable named here. The route table and
+				// the router name every handler and apply none, so the walk does
+				// not enter them: the API definition reads the table to mark its
+				// operations and applies nothing the routes apply.
 				if _, ok := decls[v.Name]; ok && !routingFunctions[v.Name] {
-					visit(v.Name)
+					visit(v.Name, gated)
 				}
 			}
 			return true
 		})
 	}
-	visit(root)
+	visit(root, false)
 	out := make([]string, 0, len(found))
 	for f := range found {
 		out = append(out, f)
@@ -256,7 +319,9 @@ func TestSurfaceReadsKnownHandlers(t *testing.T) {
 		{"GET /collections/{cid}/items/{fid}/tgsequence/{tgid}/{qtype}", "interp"},
 		{"GET /collections/{cid}/items/{fid}/tgsequence/{tgid}/{qtype}", "cumulativeLength"},
 		{"GET /collections/{cid}/items/{fid}/tgsequence/{tgid}/{qtype}", "speed"},
+		{"GET /collections/{cid}/items/{fid}/tgsequence/{tgid}/{qtype}", "rasterValue"},
 		{"GET /collections/{cid}/coverage", "rasterUnion"},
+		{"GET /collections/{cid}/coverage", "asTIFF"},
 		{"GET /collections/{cid}/position", "asCoverageJSON"},
 	} {
 		if !has(c.key, c.fn) {

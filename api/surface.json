@@ -56,7 +56,9 @@
       "asCoverageJSON",
       "clip",
       "extent",
+      "rasterTileValue",
       "rasterUnion",
+      "rasterValue",
       "stbox",
       "timeSpan",
       "transform"
@@ -79,7 +81,9 @@
       "asCoverageJSON",
       "clip",
       "extent",
+      "rasterTileValue",
       "rasterUnion",
+      "rasterValue",
       "stbox",
       "timeSpan",
       "transform"
@@ -91,6 +95,8 @@
     "conformanceClass": "https://www.opengis.net/spec/ogcapi-coverages-1/1.0/conf/core",
     "functions": [
       "SRID",
+      "asCoverageJSON",
+      "asTIFF",
       "clip",
       "numBands",
       "rasterUnion",
@@ -226,6 +232,8 @@
       "cumulativeLength",
       "interp",
       "numSequences",
+      "rasterTileValue",
+      "rasterValue",
       "sequenceN",
       "speed",
       "timeSpan",
@@ -325,7 +333,9 @@
       "asCoverageJSON",
       "clip",
       "extent",
+      "rasterTileValue",
       "rasterUnion",
+      "rasterValue",
       "stbox",
       "timeSpan",
       "transform"
@@ -369,7 +379,9 @@
       "asCoverageJSON",
       "clip",
       "extent",
+      "rasterTileValue",
       "rasterUnion",
+      "rasterValue",
       "stbox",
       "timeSpan",
       "transform"

@@ -28,14 +28,22 @@ import (
 )
 
 // atsQueryBackend answers what tgSequenceQuery reads, with an MF-JSON moving
-// float standing in for the derived curve MobilityDB computes.
+// float standing in for the derived curve MobilityDB computes, over a linearly
+// interpolated temporal primitive geometry.
 func atsQueryBackend() *fakeBackend {
+	return atsQueryBackendInterp("Linear")
+}
+
+// atsQueryBackendInterp is #atsQueryBackend over a temporal primitive geometry
+// whose interpolation interp() answers as interp.
+func atsQueryBackendInterp(interp string) *fakeBackend {
 	const mffloat = `{"type":"MovingFloat","datetimes":["2026-01-01T00:00:00+00","2026-01-01T00:10:00+00"],` +
 		`"values":[0,1234.5],"interpolation":"Linear"}`
 	f := atsCollectionsBackend()
 	f.answers = append(f.answers,
 		fakeAnswer{match: "SELECT numSequences(", rows: [][]any{{1}}},
 		fakeAnswer{match: "SELECT asMFJSON(", rows: [][]any{{mffloat}}},
+		fakeAnswer{match: "SELECT interp(", rows: [][]any{{interp}}},
 	)
 	return f
 }

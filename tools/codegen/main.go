@@ -95,7 +95,7 @@ type serialization struct {
 // the functions the tier's SQL calls.
 var featureFunctions = []string{
 	"appendInstant", "asBinary", "asMFJSON", "atTime", "cumulativeLength",
-	"deleteTime", "eIntersects", "extent", "getTime", "merge", "numInstants",
+	"deleteTime", "eIntersects", "extent", "getTime", "interp", "merge", "numInstants",
 	"numSequences", "rasterTileValue", "rasterValue", "sequenceN", "setSRID",
 	"speed", "timeSpan", "trajectory", "transform", "tsample",
 }

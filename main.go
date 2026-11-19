@@ -1187,18 +1187,28 @@ func tgSequence(w http.ResponseWriter, r *http.Request) {
 	writeRaw(w, 200, ogcify(string(body)))
 }
 
+// accelerationNotDerivable states, per interpolation interp() answers, why a
+// temporal primitive geometry of that interpolation has no acceleration curve:
+// MobilityDB interpolates a position as Discrete, Step or Linear, and under none
+// of them is the second derivative of position a curve. The standard's Quadratic
+// and Cubic, the motion curves under which it is, are no interpolation MEOS
+// carries (MEOS_INTERPTYPE_NAMES).
+var accelerationNotDerivable = map[string]string{
+	"Linear":   "acceleration is not derivable: linearly interpolated position gives a piecewise-constant (Step) speed, whose derivative is zero within each segment and undefined at the vertices",
+	"Step":     "acceleration is not derivable: Step interpolated position is constant between its instants and jumps at each, so its velocity is zero between the instants and undefined at them",
+	"Discrete": "acceleration is not derivable: Discrete interpolated position is defined at its instants alone, so it has no derivative between them",
+	"None":     "acceleration is not derivable: a position at a single instant has no derivative",
+}
+
 // tgSequenceQuery serves the OGC TemporalGeometry derived queries. distance and
 // velocity are exact MobilityDB functions; raster, a MobilityAPI query type, is
-// the values the rasters of a raster collection give along it (#rasterQuery); acceleration is NOT_IMPLEMENTED
-// because with linearly interpolated position the speed is piecewise-constant,
-// so its derivative is zero within each segment and undefined at the vertices.
+// the values the rasters of a raster collection give along it (#rasterQuery).
+// acceleration is NOT_IMPLEMENTED for every interpolation MobilityDB carries, and
+// the answer states why for the interpolation of the geometry asked for
+// (#accelerationNotDerivable), once the geometry is found to exist.
 func tgSequenceQuery(w http.ResponseWriter, r *http.Request) {
 	q := strings.ToLower(r.PathValue("qtype"))
-	if q == "acceleration" {
-		httpErr(w, 501, "acceleration is not derivable: linearly interpolated position gives a piecewise-constant (Step) speed, whose derivative is zero within each segment and undefined at the vertices")
-		return
-	}
-	if q != "velocity" && q != "distance" && q != "raster" {
+	if q != "velocity" && q != "distance" && q != "raster" && q != "acceleration" {
 		httpErr(w, 404, "unknown query type: "+q)
 		return
 	}
@@ -1233,6 +1243,24 @@ func tgSequenceQuery(w http.ResponseWriter, r *http.Request) {
 	}
 	if q == "raster" {
 		writeRasterQuery(w, r, tbl, tg)
+		return
+	}
+	if q == "acceleration" {
+		if typ := collectionType(r.Context(), r.PathValue("cid")); !typeHas(typ, "interp") {
+			httpErr(w, 400, "acceleration is not defined for a collection of "+typ+": MobilityDB states no interp over it")
+			return
+		}
+		var interp string
+		if err := db.QueryRow(r.Context(), "SELECT interp(sequenceN(trip, "+itoa(tg)+")) FROM "+ident(tbl)+" WHERE id=$1", fid).Scan(&interp); err != nil {
+			httpErr(w, 400, err.Error())
+			return
+		}
+		reason, ok := accelerationNotDerivable[interp]
+		if !ok {
+			httpErr(w, 500, "interp answered "+interp+", which is no interpolation MEOS names")
+			return
+		}
+		httpErr(w, 501, reason)
 		return
 	}
 	// The query is the function its expression applies to trip, defined for a

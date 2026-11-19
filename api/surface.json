@@ -1,0 +1,390 @@
+[
+  {
+    "method": "GET",
+    "path": "/",
+    "conformanceClass": "http://www.opengis.net/spec/ogcapi-common-1/1.0/conf/core",
+    "functions": []
+  },
+  {
+    "method": "GET",
+    "path": "/api",
+    "conformanceClass": "http://www.opengis.net/spec/ogcapi-common-1/1.0/conf/core",
+    "functions": []
+  },
+  {
+    "method": "GET",
+    "path": "/collections",
+    "conformanceClass": "http://www.opengis.net/spec/ogcapi-movingfeatures-1/1.0/conf/mf-collection",
+    "functions": []
+  },
+  {
+    "method": "POST",
+    "path": "/collections",
+    "conformanceClass": "http://www.opengis.net/spec/ogcapi-movingfeatures-1/1.0/conf/mf-collection",
+    "functions": [
+      "SRID"
+    ]
+  },
+  {
+    "method": "DELETE",
+    "path": "/collections/{cid}",
+    "conformanceClass": "http://www.opengis.net/spec/ogcapi-movingfeatures-1/1.0/conf/mf-collection",
+    "functions": []
+  },
+  {
+    "method": "GET",
+    "path": "/collections/{cid}",
+    "conformanceClass": "http://www.opengis.net/spec/ogcapi-movingfeatures-1/1.0/conf/mf-collection",
+    "functions": [
+      "extent",
+      "stbox",
+      "transform"
+    ]
+  },
+  {
+    "method": "PUT",
+    "path": "/collections/{cid}",
+    "conformanceClass": "http://www.opengis.net/spec/ogcapi-movingfeatures-1/1.0/conf/mf-collection",
+    "functions": []
+  },
+  {
+    "method": "GET",
+    "path": "/collections/{cid}/area",
+    "conformanceClass": "http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/core",
+    "functions": [
+      "SRID",
+      "asCoverageJSON",
+      "clip",
+      "extent",
+      "rasterUnion",
+      "stbox",
+      "timeSpan",
+      "transform"
+    ]
+  },
+  {
+    "method": "POST",
+    "path": "/collections/{cid}/bulk",
+    "extension": true,
+    "functions": [
+      "appendInstant"
+    ]
+  },
+  {
+    "method": "GET",
+    "path": "/collections/{cid}/corridor",
+    "conformanceClass": "http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/core",
+    "functions": [
+      "SRID",
+      "asCoverageJSON",
+      "clip",
+      "extent",
+      "rasterUnion",
+      "stbox",
+      "timeSpan",
+      "transform"
+    ]
+  },
+  {
+    "method": "GET",
+    "path": "/collections/{cid}/coverage",
+    "conformanceClass": "https://www.opengis.net/spec/ogcapi-coverages-1/1.0/conf/core",
+    "functions": [
+      "SRID",
+      "clip",
+      "numBands",
+      "rasterUnion",
+      "stbox",
+      "transform"
+    ]
+  },
+  {
+    "method": "GET",
+    "path": "/collections/{cid}/export",
+    "extension": true,
+    "functions": [
+      "asBinary",
+      "asMFJSON",
+      "atTime",
+      "eIntersects",
+      "stbox"
+    ]
+  },
+  {
+    "method": "GET",
+    "path": "/collections/{cid}/items",
+    "conformanceClass": "http://www.opengis.net/spec/ogcapi-movingfeatures-1/1.0/conf/movingfeatures",
+    "functions": [
+      "asMFJSON",
+      "atTime",
+      "eIntersects",
+      "stbox"
+    ]
+  },
+  {
+    "method": "POST",
+    "path": "/collections/{cid}/items",
+    "conformanceClass": "http://www.opengis.net/spec/ogcapi-movingfeatures-1/1.0/conf/movingfeatures",
+    "functions": [
+      "setSRID"
+    ]
+  },
+  {
+    "method": "DELETE",
+    "path": "/collections/{cid}/items/{fid}",
+    "conformanceClass": "http://www.opengis.net/spec/ogcapi-movingfeatures-1/1.0/conf/movingfeatures",
+    "functions": []
+  },
+  {
+    "method": "GET",
+    "path": "/collections/{cid}/items/{fid}",
+    "conformanceClass": "http://www.opengis.net/spec/ogcapi-movingfeatures-1/1.0/conf/movingfeatures",
+    "functions": [
+      "asMFJSON",
+      "trajectory"
+    ]
+  },
+  {
+    "method": "PUT",
+    "path": "/collections/{cid}/items/{fid}",
+    "extension": true,
+    "functions": [
+      "setSRID"
+    ]
+  },
+  {
+    "method": "GET",
+    "path": "/collections/{cid}/items/{fid}/tgsequence",
+    "conformanceClass": "http://www.opengis.net/spec/ogcapi-movingfeatures-1/1.0/conf/movingfeatures",
+    "functions": [
+      "asMFJSON",
+      "atTime",
+      "numSequences",
+      "sequenceN"
+    ]
+  },
+  {
+    "method": "POST",
+    "path": "/collections/{cid}/items/{fid}/tgsequence",
+    "conformanceClass": "http://www.opengis.net/spec/ogcapi-movingfeatures-1/1.0/conf/movingfeatures",
+    "functions": [
+      "merge",
+      "setSRID"
+    ]
+  },
+  {
+    "method": "GET",
+    "path": "/collections/{cid}/items/{fid}/tgsequence/queries",
+    "extension": true,
+    "functions": []
+  },
+  {
+    "method": "POST",
+    "path": "/collections/{cid}/items/{fid}/tgsequence/queries",
+    "extension": true,
+    "functions": [
+      "asMFJSON",
+      "transform"
+    ]
+  },
+  {
+    "method": "DELETE",
+    "path": "/collections/{cid}/items/{fid}/tgsequence/queries/{qid}",
+    "extension": true,
+    "functions": []
+  },
+  {
+    "method": "GET",
+    "path": "/collections/{cid}/items/{fid}/tgsequence/queries/{qid}",
+    "extension": true,
+    "functions": []
+  },
+  {
+    "method": "GET",
+    "path": "/collections/{cid}/items/{fid}/tgsequence/queries/{qid}/stream",
+    "extension": true,
+    "functions": []
+  },
+  {
+    "method": "DELETE",
+    "path": "/collections/{cid}/items/{fid}/tgsequence/{tgid}",
+    "conformanceClass": "http://www.opengis.net/spec/ogcapi-movingfeatures-1/1.0/conf/movingfeatures",
+    "functions": [
+      "deleteTime",
+      "getTime",
+      "numSequences",
+      "sequenceN"
+    ]
+  },
+  {
+    "method": "GET",
+    "path": "/collections/{cid}/items/{fid}/tgsequence/{tgid}/{qtype}",
+    "conformanceClass": "http://www.opengis.net/spec/ogcapi-movingfeatures-1/1.0/conf/movingfeatures",
+    "functions": [
+      "asMFJSON",
+      "atTime",
+      "cumulativeLength",
+      "interp",
+      "numSequences",
+      "sequenceN",
+      "speed",
+      "timeSpan",
+      "transform"
+    ]
+  },
+  {
+    "method": "GET",
+    "path": "/collections/{cid}/items/{fid}/tproperties",
+    "conformanceClass": "http://www.opengis.net/spec/ogcapi-movingfeatures-1/1.0/conf/movingfeatures",
+    "functions": []
+  },
+  {
+    "method": "POST",
+    "path": "/collections/{cid}/items/{fid}/tproperties",
+    "conformanceClass": "http://www.opengis.net/spec/ogcapi-movingfeatures-1/1.0/conf/movingfeatures",
+    "functions": []
+  },
+  {
+    "method": "DELETE",
+    "path": "/collections/{cid}/items/{fid}/tproperties/{pname}",
+    "conformanceClass": "http://www.opengis.net/spec/ogcapi-movingfeatures-1/1.0/conf/movingfeatures",
+    "functions": []
+  },
+  {
+    "method": "GET",
+    "path": "/collections/{cid}/items/{fid}/tproperties/{pname}",
+    "conformanceClass": "http://www.opengis.net/spec/ogcapi-movingfeatures-1/1.0/conf/movingfeatures",
+    "functions": [
+      "asMFJSON",
+      "atTime"
+    ]
+  },
+  {
+    "method": "POST",
+    "path": "/collections/{cid}/items/{fid}/tproperties/{pname}",
+    "conformanceClass": "http://www.opengis.net/spec/ogcapi-movingfeatures-1/1.0/conf/movingfeatures",
+    "functions": [
+      "merge"
+    ]
+  },
+  {
+    "method": "POST",
+    "path": "/collections/{cid}/items/{fid}/tproperties/{pname}/ingest",
+    "extension": true,
+    "functions": []
+  },
+  {
+    "method": "GET",
+    "path": "/collections/{cid}/items/{fid}/tproperties/{pname}/queries",
+    "conformanceClass": "http://www.opengis.net/spec/ogcapi-movingfeatures-4/1.0/conf/cquery",
+    "functions": []
+  },
+  {
+    "method": "POST",
+    "path": "/collections/{cid}/items/{fid}/tproperties/{pname}/queries",
+    "conformanceClass": "http://www.opengis.net/spec/ogcapi-movingfeatures-4/1.0/conf/cquery",
+    "functions": [
+      "asMFJSON"
+    ]
+  },
+  {
+    "method": "DELETE",
+    "path": "/collections/{cid}/items/{fid}/tproperties/{pname}/queries/{qid}",
+    "conformanceClass": "http://www.opengis.net/spec/ogcapi-movingfeatures-4/1.0/conf/cquery",
+    "functions": []
+  },
+  {
+    "method": "GET",
+    "path": "/collections/{cid}/items/{fid}/tproperties/{pname}/queries/{qid}",
+    "conformanceClass": "http://www.opengis.net/spec/ogcapi-movingfeatures-4/1.0/conf/cquery",
+    "functions": []
+  },
+  {
+    "method": "GET",
+    "path": "/collections/{cid}/items/{fid}/tproperties/{pname}/queries/{qid}/stream",
+    "conformanceClass": "http://www.opengis.net/spec/ogcapi-movingfeatures-4/1.0/conf/cquery",
+    "functions": []
+  },
+  {
+    "method": "DELETE",
+    "path": "/collections/{cid}/items/{fid}/tproperties/{pname}/{tvid}",
+    "conformanceClass": "http://www.opengis.net/spec/ogcapi-movingfeatures-1/1.0/conf/movingfeatures",
+    "functions": [
+      "deleteTime",
+      "getTime",
+      "numSequences",
+      "sequenceN"
+    ]
+  },
+  {
+    "method": "GET",
+    "path": "/collections/{cid}/position",
+    "conformanceClass": "http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/core",
+    "functions": [
+      "SRID",
+      "asCoverageJSON",
+      "clip",
+      "extent",
+      "rasterUnion",
+      "stbox",
+      "timeSpan",
+      "transform"
+    ]
+  },
+  {
+    "method": "GET",
+    "path": "/collections/{cid}/schema",
+    "conformanceClass": "https://www.opengis.net/spec/ogcapi-coverages-1/1.0/conf/core",
+    "functions": [
+      "bandPixelType",
+      "numBands"
+    ]
+  },
+  {
+    "method": "GET",
+    "path": "/collections/{cid}/timeseries",
+    "extension": true,
+    "functions": [
+      "asMFJSON",
+      "tsample"
+    ]
+  },
+  {
+    "method": "GET",
+    "path": "/collections/{cid}/trajectories",
+    "extension": true,
+    "functions": [
+      "asMFJSON",
+      "numInstants",
+      "transform",
+      "tsample"
+    ]
+  },
+  {
+    "method": "GET",
+    "path": "/collections/{cid}/trajectory",
+    "conformanceClass": "http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/core",
+    "functions": [
+      "SRID",
+      "asCoverageJSON",
+      "clip",
+      "extent",
+      "rasterUnion",
+      "stbox",
+      "timeSpan",
+      "transform"
+    ]
+  },
+  {
+    "method": "GET",
+    "path": "/conformance",
+    "conformanceClass": "http://www.opengis.net/spec/ogcapi-common-1/1.0/conf/core",
+    "functions": []
+  },
+  {
+    "method": "GET",
+    "path": "/health",
+    "extension": true,
+    "functions": []
+  }
+]

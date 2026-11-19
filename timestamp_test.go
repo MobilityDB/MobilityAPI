@@ -16,7 +16,9 @@ func TestATSTimestampIsRFC3339(t *testing.T) {
 	for _, c := range []struct{ in, want string }{
 		// What PostgreSQL returns: a space, and an offset abbreviated to the hour.
 		{"2026-01-01 09:00:00+01", "2026-01-01T09:00:00+01:00"},
-		{"2026-01-01 08:00:00+00", "2026-01-01T08:00:00Z"},
+		{"2026-01-01 08:00:00+00", "2026-01-01T08:00:00+00:00"},
+		// A UTC instant written with Z leaves with the offset, as the rest do.
+		{"2026-01-01T08:00:00Z", "2026-01-01T08:00:00+00:00"},
 		{"2000-01-01 00:00:00-08", "2000-01-01T00:00:00-08:00"},
 		// Sub-second precision survives; a whole second carries no fraction.
 		{"2026-01-01 09:00:00.123456+01", "2026-01-01T09:00:00.123456+01:00"},
@@ -75,4 +77,25 @@ func TestATSCollectionExtentIntervalIsRFC3339(t *testing.T) {
 			}
 		}
 	})
+}
+
+// Every timestamp a JSON document holds leaves through #rfc3339, MobilityDB's
+// MF-JSON among them, and nothing else in the document moves.
+func TestATSTimestampsInADocument(t *testing.T) {
+	cases := map[string]string{
+		`"2026-02-26T18:57:52+00"`:              `"2026-02-26T18:57:52+00:00"`,
+		`"2026-02-26T18:57:52-05"`:              `"2026-02-26T18:57:52-05:00"`,
+		`"2026-02-26T18:57:52.5+00"`:            `"2026-02-26T18:57:52.5+00:00"`,
+		`"2026-02-26 18:57:52+01"`:              `"2026-02-26T18:57:52+01:00"`,
+		`"a":"2026-02-26T18:57:52+00","b":"x"`:  `"a":"2026-02-26T18:57:52+00:00","b":"x"`,
+		`"2026-02-26T18:57:52+00:00"`:           `"2026-02-26T18:57:52+00:00"`,
+		`"2026-02-26T18:57:52Z"`:                `"2026-02-26T18:57:52+00:00"`,
+		`{"bbox":[152625.05,5883457.97,12.50]}`: `{"bbox":[152625.05,5883457.97,12.50]}`,
+		`"2026-02-26"`:                          `"2026-02-26"`,
+	}
+	for in, want := range cases {
+		if got := rfc3339In(in); got != want {
+			t.Errorf("rfc3339In(%q) = %q, want %q", in, got, want)
+		}
+	}
 }

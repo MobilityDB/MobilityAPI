@@ -265,12 +265,12 @@ func TestMeosWindowBounds(t *testing.T) {
 	}{
 		// Records at 1 s and 2 s of the tumbling window [0 s, 3 s), closed by the record at 4 s.
 		{"TUMBLING", Window{Type: "TUMBLING", Size: 3, Unit: "SECONDS"},
-			[][2]float64{{1, 10}, {2, 20}, {4, 40}}, "2026-01-01T00:00:00Z", "2026-01-01T00:00:03Z"},
+			[][2]float64{{1, 10}, {2, 20}, {4, 40}}, "2026-01-01T00:00:00+00:00", "2026-01-01T00:00:03+00:00"},
 		// The first hop boundary after a record at 0 s is 1 s: the window [-2 s, 1 s).
 		{"HOPPING", Window{Type: "HOPPING", Size: 3, Unit: "SECONDS", Hop: 1, HopUnit: "SECONDS"},
-			[][2]float64{{0, 10}, {1, 20}}, "2025-12-31T23:59:58Z", "2026-01-01T00:00:01Z"},
+			[][2]float64{{0, 10}, {1, 20}}, "2025-12-31T23:59:58+00:00", "2026-01-01T00:00:01+00:00"},
 		{"COUNT", Window{Type: "COUNT", Size: 2},
-			[][2]float64{{1, 10}, {5, 20}}, "2026-01-01T00:00:01Z", "2026-01-01T00:00:05Z"},
+			[][2]float64{{1, 10}, {5, 20}}, "2026-01-01T00:00:01+00:00", "2026-01-01T00:00:05+00:00"},
 	} {
 		t.Run(c.what, func(t *testing.T) {
 			ev := windowResults(t, c.w, c.recs, 1)[0]
@@ -292,8 +292,8 @@ func TestMeosTumblingWindow(t *testing.T) {
 		start, end string
 		avg        float64
 	}{
-		{"2026-01-01T00:00:00Z", "2026-01-01T00:00:02Z", 15},
-		{"2026-01-01T00:00:02Z", "2026-01-01T00:00:04Z", 35},
+		{"2026-01-01T00:00:00+00:00", "2026-01-01T00:00:02+00:00", 15},
+		{"2026-01-01T00:00:02+00:00", "2026-01-01T00:00:04+00:00", 35},
 	} {
 		ev := evs[i]
 		if ev["windowStart"] != want.start || ev["windowEnd"] != want.end {

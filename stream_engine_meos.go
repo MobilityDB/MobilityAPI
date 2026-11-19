@@ -167,7 +167,7 @@ func (h *meosHandle) runAggregate(ctx context.Context, spec QuerySpec, source <-
 			} else { // COUNT
 				win = append(win, in)
 				if len(win) >= spec.Window.Size {
-					if !h.emitWindow(ctx, spec, win, win[0].T, win[len(win)-1].T) {
+					if !h.emitWindow(ctx, spec, win, rfc3339(win[0].T), rfc3339(win[len(win)-1].T)) {
 						return
 					}
 					win = win[:0]
@@ -233,7 +233,7 @@ func (h *meosHandle) runHopping(ctx context.Context, spec QuerySpec, source <-ch
 }
 
 // unixRFC3339 writes a window bound, in Unix seconds, as an RFC 3339 UTC time.
-func unixRFC3339(sec int64) string { return time.Unix(sec, 0).UTC().Format(time.RFC3339) }
+func unixRFC3339(sec int64) string { return time.Unix(sec, 0).UTC().Format(rfc3339Layout) }
 
 // hopSeconds converts a HOPPING window hop+unit into seconds.
 func hopSeconds(w Window) int64 {

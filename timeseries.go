@@ -40,7 +40,7 @@ func parseFloatSeries(b []byte) []struct {
 		}
 		for i := 0; i < n; i++ {
 			ts, _ := dts[i].(string)
-			tm, err := time.Parse(time.RFC3339, rfc3339Tz(ts))
+			tm, err := time.Parse(time.RFC3339, rfc3339(ts))
 			if err != nil {
 				continue
 			}

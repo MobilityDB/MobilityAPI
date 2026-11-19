@@ -723,7 +723,7 @@ func streamQuery(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			b, _ := json.Marshal(ev)
-			fmt.Fprintf(w, "event: instant\ndata: %s\n\n", rfc3339Tz(string(b)))
+			fmt.Fprintf(w, "event: instant\ndata: %s\n\n", rfc3339In(string(b)))
 			fl.Flush()
 		}
 	}

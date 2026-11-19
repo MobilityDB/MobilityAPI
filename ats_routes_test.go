@@ -137,3 +137,37 @@ func TestATSAnnexARoutesAreClassRoutes(t *testing.T) {
 		t.Fatal("Annex A holds no route row, so this test would assert nothing")
 	}
 }
+
+// Each class is declared as its standard publishes it, and a class published
+// under https:// also under http://, the identifier OGC's test suite and the
+// standard's OpenAPI document compare (#conformsTo). A class published under
+// http:// alone gains no https:// spelling.
+func TestConformanceNamesEachClassAsPublished(t *testing.T) {
+	declared := declaredClasses(t)
+	for _, c := range []string{
+		// ets-ogcapi-coverages10, ConformanceClass.CORE
+		"http://www.opengis.net/spec/ogcapi-coverages-1/1.0/conf/core",
+		// the Coverages draft, OGC 19-087 1.0.0rc4, clause 2
+		"https://www.opengis.net/spec/ogcapi-coverages-1/1.0/conf/core",
+		// OGC API - Common - Part 2, OGC 20-024, clause 2
+		"https://www.opengis.net/spec/ogcapi-common-2/1.0/conf/collections",
+		// its OpenAPI document, rConformance.yaml
+		"http://www.opengis.net/spec/ogcapi-common-2/1.0/conf/collections",
+		// OGC API - Common - Part 1, OGC 19-072, which writes http:// alone
+		"http://www.opengis.net/spec/ogcapi-common-1/1.0/conf/core",
+	} {
+		if !declared[c] {
+			t.Errorf("the conformance declaration does not name %s", c)
+		}
+	}
+	for c := range declared {
+		if rest, ok := strings.CutPrefix(c, "https://"); ok && !declared["http://"+rest] {
+			t.Errorf("%s is declared and its http:// spelling is not", c)
+		}
+	}
+	for _, c := range []string{confMFCommon, confMovingFeatures, confCommonCore, edrConformance} {
+		if declared["https://"+strings.TrimPrefix(c, "http://")] {
+			t.Errorf("%s is published under http:// alone and is declared under https://", c)
+		}
+	}
+}

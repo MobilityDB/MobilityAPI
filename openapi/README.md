@@ -83,3 +83,32 @@ The failures concentrate in two cells the schemas type in a way no document can 
 `temporalPrimitiveValue.values` is a single scalar beside a `datetimes` array of `minItems: 2`,
 and `temporalProperty` carries that value object. They are defects in the standard, not in the
 examples — the examples are what a reader would write.
+
+## The resolved schema
+
+The wiki page [Implementing OGC API — Moving Features in
+MobilityDB](https://github.com/MobilityDB/MobilityDB/wiki/Implementing-OGC-API-Moving-Features-in-MobilityDB)
+offers the Standards Working Group candidate resolutions of the standard. Resolutions 1 to 5 edit
+the normative schemas, and `ats_resolved_schema_test.go` implements them: it reads this copy,
+applies each resolution in memory at the sites it names (each site asserted to hold the published
+text first) and writes nothing back.
+
+| Resolution | Edit | Sites |
+|---|---|---|
+| 1 | the URI branch of each `oneOf` takes the absolute-URI pattern `^[A-Za-z][A-Za-z0-9+.-]*:` | 6 |
+| 2 | `temporalPrimitiveValue.values` is an array mirroring `datetimes` | 1 |
+| 3 | the three-character branch of a `form` takes the UN/CEFACT common-code pattern `^[A-Z0-9]{3}$` | 2 |
+| 4 | a property's value interpolation is the named schema `valueInterpolation`, referred to everywhere | 4 |
+| 5 | the `datetimes` of a temporal geometry, a temporal primitive value and parametric values take `format: date-time` and the RFC 3339 pattern | 3 |
+
+Measured against the resolved schema, under either reading of `format`:
+
+- every document the service writes (`samples/`) is valid;
+- **5 of 16** published examples fail, the five whose example is wrong against a right schema
+  (a flat `extent.spatial.bbox`; a `trs` whose `properties` is a string), against 10 or 13 of 16
+  published;
+- no document that satisfies the published schema fails the resolved one.
+
+The resolutions do narrow what the schema admits, and the test states each narrowing as a case: a
+scalar `values` (2), a three-character unit that is no common code such as `deg` (3), and an
+instant that is no RFC 3339 date-time (5).

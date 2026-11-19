@@ -569,44 +569,7 @@ const (
 // defect in the standard, not in this tier, and the count is what makes that
 // claim checkable instead of quotable.
 func TestATSSchemaPublishedExamples(t *testing.T) {
-	raw, err := os.ReadFile(ogcBundlePath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var doc any
-	if err := json.Unmarshal(raw, &doc); err != nil {
-		t.Fatal(err)
-	}
-	type pair struct {
-		where, name string
-		example     any
-	}
-	var pairs []pair
-	var inline int
-	var walk func(o any, p string)
-	walk = func(o any, p string) {
-		switch v := o.(type) {
-		case map[string]any:
-			if s, ok := v["schema"].(map[string]any); ok {
-				if ex, has := v["example"]; has {
-					if ref, ok := s["$ref"].(string); ok {
-						n := ref[strings.LastIndex(ref, "/")+1:]
-						pairs = append(pairs, pair{p, n, ex})
-					} else {
-						inline++
-					}
-				}
-			}
-			for k, sub := range v {
-				walk(sub, p+"/"+k)
-			}
-		case []any:
-			for i, sub := range v {
-				walk(sub, fmt.Sprintf("%s[%d]", p, i))
-			}
-		}
-	}
-	walk(doc, "")
+	pairs, inline := publishedExamples(t)
 	if len(pairs) == 0 {
 		t.Fatal("the vendored document pairs no example with a named schema, so this test would assert nothing")
 	}
@@ -655,6 +618,53 @@ func TestATSSchemaPublishedExamples(t *testing.T) {
 	}
 	t.Logf("%d further example is attached to an inline schema and is not compared; "+
 		"%d responses declare a schema and publish no example at all", inline, exampleless(t))
+}
+
+// examplePair is an example the vendored document publishes beside the named schema
+// it illustrates.
+type examplePair struct {
+	where, name string
+	example     any
+}
+
+// publishedExamples answers every example the vendored document pairs with a named
+// schema, and how many it attaches to an inline schema instead. The pairing is the
+// document's own: every example sits in a media-type object beside its schema.
+func publishedExamples(t *testing.T) (pairs []examplePair, inline int) {
+	t.Helper()
+	raw, err := os.ReadFile(ogcBundlePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	var walk func(o any, p string)
+	walk = func(o any, p string) {
+		switch v := o.(type) {
+		case map[string]any:
+			if s, ok := v["schema"].(map[string]any); ok {
+				if ex, has := v["example"]; has {
+					if ref, ok := s["$ref"].(string); ok {
+						n := ref[strings.LastIndex(ref, "/")+1:]
+						pairs = append(pairs, examplePair{p, n, ex})
+					} else {
+						inline++
+					}
+				}
+			}
+			for k, sub := range v {
+				walk(sub, p+"/"+k)
+			}
+		case []any:
+			for i, sub := range v {
+				walk(sub, fmt.Sprintf("%s[%d]", p, i))
+			}
+		}
+	}
+	walk(doc, "")
+	return pairs, inline
 }
 
 // exampleless counts the responses that declare a schema and publish no example.

@@ -13,7 +13,8 @@
             "description": "OK"
           }
         },
-        "summary": "Landing page"
+        "summary": "Landing page",
+        "x-conformance-class": "http://www.opengis.net/spec/ogcapi-common-1/1.0/conf/core"
       }
     },
     "/api": {
@@ -23,7 +24,8 @@
             "description": "OK"
           }
         },
-        "summary": "API definition"
+        "summary": "API definition",
+        "x-conformance-class": "http://www.opengis.net/spec/ogcapi-common-1/1.0/conf/core"
       }
     },
     "/collections": {
@@ -49,7 +51,8 @@
             "description": "OK"
           }
         },
-        "summary": "Moving feature collections"
+        "summary": "Moving feature collections",
+        "x-conformance-class": "http://www.opengis.net/spec/ogcapi-movingfeatures-1/1.0/conf/mf-collection"
       },
       "post": {
         "responses": {
@@ -57,7 +60,8 @@
             "description": "OK"
           }
         },
-        "summary": "Register a new collection"
+        "summary": "Register a new collection",
+        "x-conformance-class": "http://www.opengis.net/spec/ogcapi-movingfeatures-1/1.0/conf/mf-collection"
       }
     },
     "/collections/{cid}": {
@@ -67,7 +71,8 @@
             "description": "OK"
           }
         },
-        "summary": "Delete a collection"
+        "summary": "Delete a collection",
+        "x-conformance-class": "http://www.opengis.net/spec/ogcapi-movingfeatures-1/1.0/conf/mf-collection"
       },
       "get": {
         "responses": {
@@ -75,7 +80,8 @@
             "description": "OK"
           }
         },
-        "summary": "Collection metadata"
+        "summary": "Collection metadata",
+        "x-conformance-class": "http://www.opengis.net/spec/ogcapi-movingfeatures-1/1.0/conf/mf-collection"
       },
       "put": {
         "responses": {
@@ -83,12 +89,14 @@
             "description": "OK"
           }
         },
-        "summary": "Replace collection metadata"
+        "summary": "Replace collection metadata",
+        "x-conformance-class": "http://www.opengis.net/spec/ogcapi-movingfeatures-1/1.0/conf/mf-collection"
       }
     },
     "/collections/{cid}/area": {
       "get": {
-        "summary": "OGC API - EDR: the area query over a raster collection, coords a WKT POLYGON, answered in CoverageJSON"
+        "summary": "OGC API - EDR: the area query over a raster collection, coords a WKT POLYGON, answered in CoverageJSON",
+        "x-conformance-class": "http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/core"
       }
     },
     "/collections/{cid}/bulk": {
@@ -98,12 +106,14 @@
             "description": "OK"
           }
         },
-        "summary": "Bulk ingest (extension): a batch of (vehicleId, position, time) observations as GeoJSON Points or GeoParquet, optionally gzip/deflate/br/zstd-compressed; each is appended as one instant"
+        "summary": "Bulk ingest (extension): a batch of (vehicleId, position, time) observations as GeoJSON Points or GeoParquet, optionally gzip/deflate/br/zstd-compressed; each is appended as one instant",
+        "x-mobilityapi-extension": true
       }
     },
     "/collections/{cid}/corridor": {
       "get": {
-        "summary": "OGC API - EDR: the corridor query over a raster collection, coords a WKT LINESTRING, answered in CoverageJSON"
+        "summary": "OGC API - EDR: the corridor query over a raster collection, coords a WKT LINESTRING, answered in CoverageJSON",
+        "x-conformance-class": "http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/core"
       }
     },
     "/collections/{cid}/coverage": {
@@ -113,7 +123,8 @@
             "description": "OK"
           }
         },
-        "summary": "OGC API - Coverages: the raster of one period of a raster collection, subset by bbox, datetime, subset and properties, as GeoTIFF or CoverageJSON"
+        "summary": "OGC API - Coverages: the raster of one period of a raster collection, subset by bbox, datetime, subset and properties, as GeoTIFF or CoverageJSON",
+        "x-conformance-class": "https://www.opengis.net/spec/ogcapi-coverages-1/1.0/conf/core"
       }
     },
     "/collections/{cid}/export": {
@@ -123,7 +134,8 @@
             "description": "OK"
           }
         },
-        "summary": "Bulk lakehouse export: NDJSON, or ?format=parquet (WKB + bbox/time sidecar)"
+        "summary": "Bulk lakehouse export: NDJSON, or ?format=parquet (WKB + bbox/time sidecar)",
+        "x-mobilityapi-extension": true
       }
     },
     "/collections/{cid}/items": {
@@ -188,7 +200,8 @@
             "description": "OK"
           }
         },
-        "summary": "Moving features (streamed, keyset-paged; bbox/datetime/subtrajectory filters)"
+        "summary": "Moving features (streamed, keyset-paged; bbox/datetime/subtrajectory filters)",
+        "x-conformance-class": "http://www.opengis.net/spec/ogcapi-movingfeatures-1/1.0/conf/movingfeatures"
       },
       "post": {
         "responses": {
@@ -196,7 +209,8 @@
             "description": "OK"
           }
         },
-        "summary": "Insert a moving feature"
+        "summary": "Insert a moving feature",
+        "x-conformance-class": "http://www.opengis.net/spec/ogcapi-movingfeatures-1/1.0/conf/movingfeatures"
       }
     },
     "/collections/{cid}/items/{fid}": {
@@ -206,7 +220,8 @@
             "description": "OK"
           }
         },
-        "summary": "Delete a moving feature"
+        "summary": "Delete a moving feature",
+        "x-conformance-class": "http://www.opengis.net/spec/ogcapi-movingfeatures-1/1.0/conf/movingfeatures"
       },
       "get": {
         "responses": {
@@ -214,7 +229,8 @@
             "description": "OK"
           }
         },
-        "summary": "A moving feature as a Feature"
+        "summary": "A moving feature as a Feature",
+        "x-conformance-class": "http://www.opengis.net/spec/ogcapi-movingfeatures-1/1.0/conf/movingfeatures"
       },
       "put": {
         "responses": {
@@ -222,7 +238,8 @@
             "description": "OK"
           }
         },
-        "summary": "Replace a moving feature"
+        "summary": "Replace a moving feature",
+        "x-mobilityapi-extension": true
       }
     },
     "/collections/{cid}/items/{fid}/tgsequence": {
@@ -302,7 +319,8 @@
             "description": "OK"
           }
         },
-        "summary": "Temporal geometry sequence (TemporalGeometrySequence; members addressable by their 1-based id)"
+        "summary": "Temporal geometry sequence (TemporalGeometrySequence; members addressable by their 1-based id)",
+        "x-conformance-class": "http://www.opengis.net/spec/ogcapi-movingfeatures-1/1.0/conf/movingfeatures"
       },
       "post": {
         "responses": {
@@ -310,7 +328,8 @@
             "description": "OK"
           }
         },
-        "summary": "Append a temporally-disjoint member sequence"
+        "summary": "Append a temporally-disjoint member sequence",
+        "x-conformance-class": "http://www.opengis.net/spec/ogcapi-movingfeatures-1/1.0/conf/movingfeatures"
       }
     },
     "/collections/{cid}/items/{fid}/tgsequence/queries": {
@@ -320,7 +339,8 @@
             "description": "OK"
           }
         },
-        "summary": "List the geometry (position) continuous queries of a feature"
+        "summary": "List the geometry (position) continuous queries of a feature",
+        "x-mobilityapi-extension": true
       },
       "post": {
         "responses": {
@@ -328,7 +348,8 @@
             "description": "OK"
           }
         },
-        "summary": "Register a geometry continuous query streaming the moving feature's position"
+        "summary": "Register a geometry continuous query streaming the moving feature's position",
+        "x-mobilityapi-extension": true
       }
     },
     "/collections/{cid}/items/{fid}/tgsequence/queries/{qid}": {
@@ -338,7 +359,8 @@
             "description": "OK"
           }
         },
-        "summary": "Stop a geometry continuous query"
+        "summary": "Stop a geometry continuous query",
+        "x-mobilityapi-extension": true
       },
       "get": {
         "responses": {
@@ -346,7 +368,8 @@
             "description": "OK"
           }
         },
-        "summary": "Geometry continuous-query status (the cquery link object)"
+        "summary": "Geometry continuous-query status (the cquery link object)",
+        "x-mobilityapi-extension": true
       }
     },
     "/collections/{cid}/items/{fid}/tgsequence/queries/{qid}/stream": {
@@ -356,7 +379,8 @@
             "description": "OK"
           }
         },
-        "summary": "Moving-feature positions as Server-Sent Events (see api/streaming-asyncapi.yaml)"
+        "summary": "Moving-feature positions as Server-Sent Events (see api/streaming-asyncapi.yaml)",
+        "x-mobilityapi-extension": true
       }
     },
     "/collections/{cid}/items/{fid}/tgsequence/{tgid}": {
@@ -366,7 +390,8 @@
             "description": "OK"
           }
         },
-        "summary": "Delete a temporal primitive geometry (member sequence) by id"
+        "summary": "Delete a temporal primitive geometry (member sequence) by id",
+        "x-conformance-class": "http://www.opengis.net/spec/ogcapi-movingfeatures-1/1.0/conf/movingfeatures"
       }
     },
     "/collections/{cid}/items/{fid}/tgsequence/{tgid}/{qtype}": {
@@ -376,7 +401,8 @@
             "description": "OK"
           }
         },
-        "summary": "Derived query on a member geometry: distance | velocity | raster (acceleration → 501, not derivable for this motion model); raster reads the rasters of the raster collection `collection` along it, from band `band` (1 by default), kept to the values in `valueRange=lo,hi` when given"
+        "summary": "Derived query on a member geometry: distance | velocity | raster (acceleration → 501, not derivable for this motion model); raster reads the rasters of the raster collection `collection` along it, from band `band` (1 by default), kept to the values in `valueRange=lo,hi` when given",
+        "x-conformance-class": "http://www.opengis.net/spec/ogcapi-movingfeatures-1/1.0/conf/movingfeatures"
       }
     },
     "/collections/{cid}/items/{fid}/tproperties": {
@@ -413,7 +439,8 @@
             "description": "OK"
           }
         },
-        "summary": "Stored temporal properties of a feature"
+        "summary": "Stored temporal properties of a feature",
+        "x-conformance-class": "http://www.opengis.net/spec/ogcapi-movingfeatures-1/1.0/conf/movingfeatures"
       },
       "post": {
         "responses": {
@@ -421,7 +448,8 @@
             "description": "OK"
           }
         },
-        "summary": "Add one or more temporal properties (TReal | TInteger | TText | TBoolean) to a feature"
+        "summary": "Add one or more temporal properties (TReal | TInteger | TText | TBoolean) to a feature",
+        "x-conformance-class": "http://www.opengis.net/spec/ogcapi-movingfeatures-1/1.0/conf/movingfeatures"
       }
     },
     "/collections/{cid}/items/{fid}/tproperties/{pname}": {
@@ -431,7 +459,8 @@
             "description": "OK"
           }
         },
-        "summary": "Delete a temporal property"
+        "summary": "Delete a temporal property",
+        "x-conformance-class": "http://www.opengis.net/spec/ogcapi-movingfeatures-1/1.0/conf/movingfeatures"
       },
       "get": {
         "parameters": [
@@ -479,7 +508,8 @@
             "description": "OK"
           }
         },
-        "summary": "A stored temporal property as an OGC temporalProperty"
+        "summary": "A stored temporal property as an OGC temporalProperty",
+        "x-conformance-class": "http://www.opengis.net/spec/ogcapi-movingfeatures-1/1.0/conf/movingfeatures"
       },
       "post": {
         "responses": {
@@ -487,7 +517,8 @@
             "description": "OK"
           }
         },
-        "summary": "Append values to a temporal property (temporally disjoint; overlap → 409)"
+        "summary": "Append values to a temporal property (temporally disjoint; overlap → 409)",
+        "x-conformance-class": "http://www.opengis.net/spec/ogcapi-movingfeatures-1/1.0/conf/movingfeatures"
       }
     },
     "/collections/{cid}/items/{fid}/tproperties/{pname}/ingest": {
@@ -497,7 +528,8 @@
             "description": "OK"
           }
         },
-        "summary": "Push a live record ({datetime, value}) to the live queries on the property"
+        "summary": "Push a live record ({datetime, value}) to the live queries on the property",
+        "x-mobilityapi-extension": true
       }
     },
     "/collections/{cid}/items/{fid}/tproperties/{pname}/queries": {
@@ -507,7 +539,8 @@
             "description": "OK"
           }
         },
-        "summary": "List the continuous queries on a temporal property"
+        "summary": "List the continuous queries on a temporal property",
+        "x-conformance-class": "http://www.opengis.net/spec/ogcapi-movingfeatures-4/1.0/conf/cquery"
       },
       "post": {
         "responses": {
@@ -515,7 +548,8 @@
             "description": "OK"
           }
         },
-        "summary": "Register a continuous query (MF Part 4): a lifted transform (operation), or a windowed aggregation (aggregation + window: COUNT | TUMBLING | HOPPING). Set live:true to source from pushed records"
+        "summary": "Register a continuous query (MF Part 4): a lifted transform (operation), or a windowed aggregation (aggregation + window: COUNT | TUMBLING | HOPPING). Set live:true to source from pushed records",
+        "x-conformance-class": "http://www.opengis.net/spec/ogcapi-movingfeatures-4/1.0/conf/cquery"
       }
     },
     "/collections/{cid}/items/{fid}/tproperties/{pname}/queries/{qid}": {
@@ -525,7 +559,8 @@
             "description": "OK"
           }
         },
-        "summary": "Stop a continuous query"
+        "summary": "Stop a continuous query",
+        "x-conformance-class": "http://www.opengis.net/spec/ogcapi-movingfeatures-4/1.0/conf/cquery"
       },
       "get": {
         "responses": {
@@ -533,7 +568,8 @@
             "description": "OK"
           }
         },
-        "summary": "Continuous-query status (the cquery link object)"
+        "summary": "Continuous-query status (the cquery link object)",
+        "x-conformance-class": "http://www.opengis.net/spec/ogcapi-movingfeatures-4/1.0/conf/cquery"
       }
     },
     "/collections/{cid}/items/{fid}/tproperties/{pname}/queries/{qid}/stream": {
@@ -543,7 +579,8 @@
             "description": "OK"
           }
         },
-        "summary": "Continuous-query results as Server-Sent Events (see api/streaming-asyncapi.yaml)"
+        "summary": "Continuous-query results as Server-Sent Events (see api/streaming-asyncapi.yaml)",
+        "x-conformance-class": "http://www.opengis.net/spec/ogcapi-movingfeatures-4/1.0/conf/cquery"
       }
     },
     "/collections/{cid}/items/{fid}/tproperties/{pname}/{tvid}": {
@@ -553,12 +590,14 @@
             "description": "OK"
           }
         },
-        "summary": "Delete a temporal primitive value (member value sequence) by its 1-based id"
+        "summary": "Delete a temporal primitive value (member value sequence) by its 1-based id",
+        "x-conformance-class": "http://www.opengis.net/spec/ogcapi-movingfeatures-1/1.0/conf/movingfeatures"
       }
     },
     "/collections/{cid}/position": {
       "get": {
-        "summary": "OGC API - EDR: the position query over a raster collection, coords a WKT POINT, answered in CoverageJSON"
+        "summary": "OGC API - EDR: the position query over a raster collection, coords a WKT POINT, answered in CoverageJSON",
+        "x-conformance-class": "http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/core"
       }
     },
     "/collections/{cid}/schema": {
@@ -568,12 +607,36 @@
             "description": "OK"
           }
         },
-        "summary": "OGC API - Coverages: the fields of a raster collection, one per band"
+        "summary": "OGC API - Coverages: the fields of a raster collection, one per band",
+        "x-conformance-class": "https://www.opengis.net/spec/ogcapi-coverages-1/1.0/conf/core"
+      }
+    },
+    "/collections/{cid}/timeseries": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "summary": "The fleet-wide average of the speed property, grouped by ship type, over step-second buckets",
+        "x-mobilityapi-extension": true
+      }
+    },
+    "/collections/{cid}/trajectories": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "summary": "Every feature's trajectory for animated rendering, sampled to ~sample seconds (180 by default), in WGS84, as {trips, tmin, tmax}",
+        "x-mobilityapi-extension": true
       }
     },
     "/collections/{cid}/trajectory": {
       "get": {
-        "summary": "OGC API - EDR: the trajectory query over a raster collection, coords a WKT LINESTRING, answered in CoverageJSON"
+        "summary": "OGC API - EDR: the trajectory query over a raster collection, coords a WKT LINESTRING, answered in CoverageJSON",
+        "x-conformance-class": "http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/core"
       }
     },
     "/conformance": {
@@ -583,7 +646,19 @@
             "description": "OK"
           }
         },
-        "summary": "Conformance declaration"
+        "summary": "Conformance declaration",
+        "x-conformance-class": "http://www.opengis.net/spec/ogcapi-common-1/1.0/conf/core"
+      }
+    },
+    "/health": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "summary": "Liveness: answers {\"status\":\"ok\"} while the service is up",
+        "x-mobilityapi-extension": true
       }
     }
   }

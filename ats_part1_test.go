@@ -87,9 +87,9 @@ type atsTest struct {
 
 // The conformance class URIs of Part 1.
 const (
-	classCollection = "http://www.opengis.net/spec/ogcapi-movingfeatures-1/1.0/conf/mf-collection"
-	classFeatures   = "http://www.opengis.net/spec/ogcapi-movingfeatures-1/1.0/conf/movingfeatures"
-	classCommon     = "http://www.opengis.net/spec/ogcapi-movingfeatures-1/1.0/conf/common"
+	classCollection = confMFCollection
+	classFeatures   = confMovingFeatures
+	classCommon     = confMFCommon
 )
 
 // atsPart1 is Annex A. The 45 abstract tests of the mf-collection and

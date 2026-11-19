@@ -262,7 +262,7 @@ func routeTable() []route {
 		// Live ingestion: a producer pushes records the live queries process.
 		{"POST", "/collections/{cid}/items/{fid}/tproperties/{pname}/ingest", ingestProperty, extension},
 		// A continuous query streaming the moving feature's position, the feed of
-		// an animated map, which CONFORMANCE.md states is no Part 4 requirement.
+		// an animated map, which no requirement of Part 4 states.
 		{"POST", "/collections/{cid}/items/{fid}/tgsequence/queries", postGeometryQuery, extension},
 		{"GET", "/collections/{cid}/items/{fid}/tgsequence/queries", listGeometryQueries, extension},
 		{"GET", "/collections/{cid}/items/{fid}/tgsequence/queries/{qid}", getQuery, extension},

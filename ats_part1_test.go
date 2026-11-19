@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
@@ -45,7 +46,7 @@ const (
 // ⛔ AN UNCONDITIONAL "awaits its live assertion" UNDERSTATES CONFORMANCE. A row a
 // named group already asserts reads as outstanding, so the tier's own coverage report
 // is the thing that makes the claim look worse than the suite is. The entry is what
-// tells the two apart, and TestATSEveryLiveRowIsDischarged keeps every row carrying
+// tells the two apart, and TestATSEveryAnsweredRowIsDischarged keeps every row carrying
 // one that names a test which exists.
 var atsDischargedBy = map[string]string{
 	"/conf/mf-collection/collections-post-success":         "TestATSLiveCollectionLifecycle",
@@ -65,6 +66,13 @@ var atsDischargedBy = map[string]string{
 	"/conf/movingfeatures/param-leaf-response":             "TestATSLiveQueryParameters",
 	"/conf/movingfeatures/param-subtrajectory-response":    "TestATSLiveQueryParameters",
 	"/conf/movingfeatures/param-subtemporalvalue-response": "TestATSLiveSubTemporalValue",
+	"/conf/mf-collection/collections-get-success":          "TestATSCollectionsGetSuccess",
+	"/conf/mf-collection/collection-get-success":           "TestATSCollectionGetSuccess",
+	"/conf/movingfeatures/tgsequence-get-success":          "TestATSTGSequenceGetSuccess",
+	"/conf/movingfeatures/tproperties-get-success":         "TestATSTPropertiesGetSuccess",
+	"/conf/movingfeatures/tpgeometry-query-distance":       "TestATSTPGeometryQueryDistanceAndVelocity",
+	"/conf/movingfeatures/tpgeometry-query-velocity":       "TestATSTPGeometryQueryDistanceAndVelocity",
+	"/conf/movingfeatures/tpgeometry-query-acceleration":   "TestATSTPGeometryQueryAccelerationNotDerivable",
 }
 
 // atsTest is one abstract test of Annex A.
@@ -117,9 +125,9 @@ var atsPart1 = []atsTest{
 	{"/conf/movingfeatures/tgsequence-post-success", classFeatures, atsLive, "", "", "the POST response is 201 or 202"},
 	{"/conf/movingfeatures/tpgeometry-delete", classFeatures, atsRoute, "DELETE", "/collections/{cid}/items/{fid}/tgsequence/{tgid}", "the TemporalPrimitiveGeometry can be deleted at the expected location"},
 	{"/conf/movingfeatures/tpgeometry-delete-success", classFeatures, atsLive, "", "", "the DELETE response is 200, 202 or 204"},
-	{"/conf/movingfeatures/tpgeometry-query-distance", classFeatures, atsRoute, "GET", "/collections/{cid}/items/{fid}/tgsequence/{tgid}/{qtype}", "a Distance query returns a TReal time-to-distance curve"},
-	{"/conf/movingfeatures/tpgeometry-query-velocity", classFeatures, atsRoute, "GET", "/collections/{cid}/items/{fid}/tgsequence/{tgid}/{qtype}", "a Velocity query returns a TReal time-to-velocity curve"},
-	{"/conf/movingfeatures/tpgeometry-query-acceleration", classFeatures, atsRoute, "GET", "/collections/{cid}/items/{fid}/tgsequence/{tgid}/{qtype}", "an Acceleration query returns a TReal time-to-acceleration curve"},
+	{"/conf/movingfeatures/tpgeometry-query-distance", classFeatures, atsResponse, "", "", "a Distance query returns a TReal time-to-distance curve"},
+	{"/conf/movingfeatures/tpgeometry-query-velocity", classFeatures, atsResponse, "", "", "a Velocity query returns a TReal time-to-velocity curve"},
+	{"/conf/movingfeatures/tpgeometry-query-acceleration", classFeatures, atsResponse, "", "", "an Acceleration query returns a TReal time-to-acceleration curve"},
 
 	// -- movingfeatures: the temporal properties ----------------------------
 	{"/conf/movingfeatures/tproperties-get", classFeatures, atsRoute, "GET", "/collections/{cid}/items/{fid}/tproperties", "the TemporalProperties can be extracted using query parameters"},
@@ -336,36 +344,49 @@ func TestATSCoverageReport(t *testing.T) {
 		len(rows), served, missing, live))
 }
 
-// Every abstract test needing a backend names a live test that discharges it, and
-// every name is a test that exists.
+// Every abstract test a response discharges -- read from the service over the
+// fixture database (atsLive) or over a scripted backend (atsResponse) -- names the
+// test asserting that response, and every name is a test that exists.
 //
 // ⛔ A MAP ENTRY NAMING A TEST THAT DOES NOT EXIST IS WORSE THAN NO ENTRY: it reports
 // an abstract test as discharged by nothing at all, which is the failure the entry
-// was added to end. The source is read for the declaration rather than trusted.
-func TestATSEveryLiveRowIsDischarged(t *testing.T) {
-	src, err := os.ReadFile("ats_live_test.go")
+// was added to end. The sources are read for the declaration rather than trusted.
+//
+// ⛔ A RESPONSE ROW IS NO WEAKER A CLAIM THAN A LIVE ONE. Both state what the service
+// answers, so both name the test that reads the answer; a response row counted as
+// asserted without one is a claim nothing checks.
+func TestATSEveryAnsweredRowIsDischarged(t *testing.T) {
+	files, err := filepath.Glob("*_test.go")
 	if err != nil {
 		t.Fatal(err)
 	}
-	var live, undischarged int
+	var src []byte
+	for _, f := range files {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		src = append(src, b...)
+	}
+	var answered, undischarged int
 	for _, a := range atsPart1 {
-		if a.kind != atsLive {
+		if a.kind != atsLive && a.kind != atsResponse {
 			continue
 		}
-		live++
+		answered++
 		by := atsDischargedBy[a.id]
 		if by == "" {
 			undischarged++
-			t.Errorf("%s needs a backend and names no live test that discharges it (%s)",
+			t.Errorf("%s states a response and names no test that discharges it (%s)",
 				a.id, a.purpose)
 			continue
 		}
 		if !bytes.Contains(src, []byte("func "+by+"(")) {
-			t.Errorf("%s names %s, which ats_live_test.go does not declare", a.id, by)
+			t.Errorf("%s names %s, which no test file declares", a.id, by)
 		}
 	}
-	if live == 0 {
-		t.Fatal("the registry carries no live row, so this test would assert nothing")
+	if answered == 0 {
+		t.Fatal("the registry carries no row stating a response, so this test would assert nothing")
 	}
-	t.Logf("%d abstract tests need a backend; %d are undischarged", live, undischarged)
+	t.Logf("%d abstract tests state a response; %d are undischarged", answered, undischarged)
 }

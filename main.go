@@ -100,19 +100,11 @@ func mdbInterp(s string) (string, error) {
 var epsgName = regexp.MustCompile(`"name":\s*"EPSG:(\d+)"`)
 var epsgURN = regexp.MustCompile(`EPSG:+(\d+)`)
 
-// hourOnlyOffset matches PostgreSQL's hour-only timezone offset on an ISO
-// timestamp ("…18:57:52+00"); RFC 3339 — and strict parsers such as JS Date —
-// require the ":00" minutes.
-var hourOnlyOffset = regexp.MustCompile(`(\d\d:\d\d:\d\d(?:\.\d+)?)([+-]\d\d)(["\s]|$)`)
-
-// rfc3339Tz completes hour-only timezone offsets so datetimes are RFC 3339.
-func rfc3339Tz(s string) string { return hourOnlyOffset.ReplaceAllString(s, `$1$2:00$3`) }
-
 // ogcify turns what MobilityDB writes into what the standard names. The
 // interpolation needs nothing: MobilityDB's "Step" is already the token both
 // `motionCurve` and `temporalPrimitiveValue` enumerate.
 func ogcify(s string) string {
-	s = rfc3339Tz(s)
+	s = rfc3339In(s)
 	return epsgName.ReplaceAllString(s, `"name":"urn:ogc:def:crs:EPSG::$1"`)
 }
 
@@ -1505,7 +1497,7 @@ func listTProperties(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, map[string]any{
 		"temporalProperties": list, "numberReturned": len(list), "numberMatched": len(list),
-		"timeStamp": time.Now().UTC().Format(time.RFC3339),
+		"timeStamp": time.Now().UTC().Format(rfc3339Layout),
 		"links":     []map[string]string{{"rel": "self", "href": base}},
 	})
 }

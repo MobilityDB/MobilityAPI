@@ -43,7 +43,7 @@ func parseTripSegments(b []byte) []tripSeg {
 		seg := tripSeg{}
 		for i := 0; i < n; i++ {
 			ts, _ := dts[i].(string)
-			t, err := time.Parse(time.RFC3339, rfc3339Tz(ts))
+			t, err := time.Parse(time.RFC3339, rfc3339(ts))
 			if err != nil {
 				continue
 			}

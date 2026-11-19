@@ -155,7 +155,7 @@ func (h *meosHandle) runAggregate(ctx context.Context, spec QuerySpec, source <-
 			if spec.Window.Type == "TUMBLING" {
 				ts := instantUnix(in, len(win)) // best-effort event time
 				if len(win) > 0 && ts >= winEndUnix {
-					if !h.emitWindow(ctx, spec, win) {
+					if !h.emitWindow(ctx, spec, win, unixRFC3339(winEndUnix-tumblingSpan), unixRFC3339(winEndUnix)) {
 						return
 					}
 					win = win[:0]
@@ -167,7 +167,7 @@ func (h *meosHandle) runAggregate(ctx context.Context, spec QuerySpec, source <-
 			} else { // COUNT
 				win = append(win, in)
 				if len(win) >= spec.Window.Size {
-					if !h.emitWindow(ctx, spec, win) {
+					if !h.emitWindow(ctx, spec, win, win[0].T, win[len(win)-1].T) {
 						return
 					}
 					win = win[:0]
@@ -215,7 +215,7 @@ func (h *meosHandle) runHopping(ctx context.Context, spec QuerySpec, source <-ch
 					}
 				}
 				if len(win) > 0 {
-					if !h.emitWindow(ctx, spec, win) {
+					if !h.emitWindow(ctx, spec, win, unixRFC3339(lo), unixRFC3339(nextEmit)) {
 						return
 					}
 				}
@@ -232,6 +232,9 @@ func (h *meosHandle) runHopping(ctx context.Context, spec QuerySpec, source <-ch
 	}
 }
 
+// unixRFC3339 writes a window bound, in Unix seconds, as an RFC 3339 UTC time.
+func unixRFC3339(sec int64) string { return time.Unix(sec, 0).UTC().Format(time.RFC3339) }
+
 // hopSeconds converts a HOPPING window hop+unit into seconds.
 func hopSeconds(w Window) int64 {
 	hop := int64(w.Hop)
@@ -247,16 +250,19 @@ func hopSeconds(w Window) int64 {
 	return hop
 }
 
-// emitWindow computes the aggregate over a closed window and emits it.
-func (h *meosHandle) emitWindow(ctx context.Context, spec QuerySpec, win []Instant) bool {
+// emitWindow computes the aggregate over a closed window and emits it, with the
+// bounds of the window: [start, end) for a time window (TUMBLING, HOPPING), the
+// span boundaries the window covers, and [start, end] for a COUNT window, the
+// times of its first and last record.
+func (h *meosHandle) emitWindow(ctx context.Context, spec QuerySpec, win []Instant, start, end string) bool {
 	val, count, err := windowAggregate(spec.Ptype, spec.Agg, win)
 	if err != nil {
 		h.setStatus("failed")
 		return false
 	}
 	ev := Event{
-		"windowStart": win[0].T,
-		"windowEnd":   win[len(win)-1].T,
+		"windowStart": start,
+		"windowEnd":   end,
 		"property":    spec.Pname,
 		"aggregation": spec.Agg,
 		"value":       val,

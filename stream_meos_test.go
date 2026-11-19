@@ -224,3 +224,86 @@ func TestMeosConcurrentQueries(t *testing.T) {
 		t.Errorf("concurrent results sum = %v, want %v", sum, want)
 	}
 }
+
+// windowResults submits an aggregation over the given window, feeds it one record
+// per (second, value) pair from 2026-01-01T00:00:00Z, and answers the first n
+// window results.
+func windowResults(t *testing.T, w Window, recs [][2]float64, n int) []Event {
+	t.Helper()
+	e, _ := defaultStreamEngine()
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	src := make(chan Instant, len(recs))
+	h, err := e.Submit(ctx, QuerySpec{Agg: "AVG", Window: w}, src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range recs {
+		src <- Instant{T: fmt.Sprintf("2026-01-01T00:00:%02dZ", int(r[0])), V: r[1]}
+	}
+	var out []Event
+	for len(out) < n {
+		select {
+		case ev := <-h.Results():
+			out = append(out, ev)
+		case <-time.After(5 * time.Second):
+			t.Fatalf("only %d of %d window results", len(out), n)
+		}
+	}
+	return out
+}
+
+// Requirement 2: a window result carries the bounds of its window. A time window
+// is [start, end), the span it covers whatever records fall in it; a COUNT window
+// is [start, end], the times of its first and last record.
+func TestMeosWindowBounds(t *testing.T) {
+	for _, c := range []struct {
+		what       string
+		w          Window
+		recs       [][2]float64
+		start, end string
+	}{
+		// Records at 1 s and 2 s of the tumbling window [0 s, 3 s), closed by the record at 4 s.
+		{"TUMBLING", Window{Type: "TUMBLING", Size: 3, Unit: "SECONDS"},
+			[][2]float64{{1, 10}, {2, 20}, {4, 40}}, "2026-01-01T00:00:00Z", "2026-01-01T00:00:03Z"},
+		// The first hop boundary after a record at 0 s is 1 s: the window [-2 s, 1 s).
+		{"HOPPING", Window{Type: "HOPPING", Size: 3, Unit: "SECONDS", Hop: 1, HopUnit: "SECONDS"},
+			[][2]float64{{0, 10}, {1, 20}}, "2025-12-31T23:59:58Z", "2026-01-01T00:00:01Z"},
+		{"COUNT", Window{Type: "COUNT", Size: 2},
+			[][2]float64{{1, 10}, {5, 20}}, "2026-01-01T00:00:01Z", "2026-01-01T00:00:05Z"},
+	} {
+		t.Run(c.what, func(t *testing.T) {
+			ev := windowResults(t, c.w, c.recs, 1)[0]
+			if ev["windowStart"] != c.start || ev["windowEnd"] != c.end {
+				t.Errorf("window = [%v, %v], want [%s, %s]", ev["windowStart"], ev["windowEnd"], c.start, c.end)
+			}
+		})
+	}
+}
+
+// Requirement 3: a TUMBLING window is fixed-duration and non-overlapping, so
+// each record falls in exactly one window and consecutive windows meet.
+func TestMeosTumblingWindow(t *testing.T) {
+	// Windows of 2 s over records at 0..5 s: [0,2) {10,20}, [2,4) {30,40}, closed
+	// by the records at 2 s and 4 s.
+	evs := windowResults(t, Window{Type: "TUMBLING", Size: 2, Unit: "SECONDS"},
+		[][2]float64{{0, 10}, {1, 20}, {2, 30}, {3, 40}, {4, 50}}, 2)
+	for i, want := range []struct {
+		start, end string
+		avg        float64
+	}{
+		{"2026-01-01T00:00:00Z", "2026-01-01T00:00:02Z", 15},
+		{"2026-01-01T00:00:02Z", "2026-01-01T00:00:04Z", 35},
+	} {
+		ev := evs[i]
+		if ev["windowStart"] != want.start || ev["windowEnd"] != want.end {
+			t.Errorf("window %d = [%v, %v], want [%s, %s]", i, ev["windowStart"], ev["windowEnd"], want.start, want.end)
+		}
+		if ev["count"].(int) != 2 || math.Abs(ev["value"].(float64)-want.avg) > 1e-9 {
+			t.Errorf("window %d = AVG %v over %v records, want %v over 2", i, ev["value"], ev["count"], want.avg)
+		}
+	}
+	if evs[0]["windowEnd"] != evs[1]["windowStart"] {
+		t.Errorf("consecutive tumbling windows do not meet: %v then %v", evs[0]["windowEnd"], evs[1]["windowStart"])
+	}
+}

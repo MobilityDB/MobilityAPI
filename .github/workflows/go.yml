@@ -192,34 +192,28 @@ jobs:
             "postgresql-server-dev-${PGVERSION}"
 
       # WHAT ALL=ON REQUIRES, which is what lets the builds below ask for every
-      # family. libh3 is the H3 family's library, and the vendored pgPointCloud
-      # that POINTCLOUD compiles needs the autotools with libxml2 and zlib
-      # installed above. The h3 and pointcloud PostgreSQL EXTENSIONS are a
-      # separate need: MobilityDB's control file requires them when their family
-      # is on, so CREATE EXTENSION pulls them in and they must exist in the
-      # cluster. apt.postgresql.org carries both for PostgreSQL 16 to 18.
+      # family. The vendored pgPointCloud that POINTCLOUD compiles needs the
+      # autotools with libxml2 and zlib installed above. The h3 and pointcloud
+      # PostgreSQL EXTENSIONS are a separate need: MobilityDB's control file
+      # requires them when their family is on, so CREATE EXTENSION pulls them in
+      # and they must exist in the cluster. apt.postgresql.org carries both for
+      # PostgreSQL 16 to 18.
       - name: Install what the optional families require
         run: |
-          sudo apt-get install -y libh3-dev \
+          sudo apt-get install -y \
             "postgresql-${PGVERSION}-pointcloud" \
             "postgresql-${PGVERSION}-h3"
 
-      # The pgdg libh3-dev package layout differs between releases, so the
-      # header and the library are located on disk and pinned rather than left
-      # to CMake's find_path and find_library defaults. This is MobilityDB's own
-      # step, from its .github/workflows/pgversion.yml.
-      - name: Locate libh3 on disk and pin its paths
+      # libh3 is the H3 family's library. MobilityDB supports one H3 release,
+      # H3_REQUIRED_VERSION of its CMakeLists.txt, and its configure refuses any
+      # other, so the library is not a package: MobilityDB's own
+      # .github/scripts/install-h3.sh builds that release from its tag, as its
+      # .github/workflows/pgversion.yml does.
+      - name: Install the H3 release MobilityDB supports
         run: |
-          H3_INC=$(dpkg -L libh3-dev | grep -E 'h3api\.h$' | head -1)
-          H3_LIB=$(dpkg -L libh3-dev libh3-1 2>/dev/null | grep -E 'libh3\.so$' | head -1)
-          if [ -z "$H3_INC" ] || [ -z "$H3_LIB" ]; then
-            find /usr -name 'h3api.h' 2>/dev/null
-            find /usr -name 'libh3*' 2>/dev/null
-            echo "::error::could not locate libh3 headers/library"
-            exit 1
-          fi
-          echo "H3_INCLUDE_DIR=$(dirname "$H3_INC")" >> "$GITHUB_ENV"
-          echo "H3_LIBRARY=$H3_LIB" >> "$GITHUB_ENV"
+          sudo mobilitydb/.github/scripts/install-h3.sh /usr/local
+          echo "H3_INCLUDE_DIR=/usr/local/include/h3" >> "$GITHUB_ENV"
+          echo "H3_LIBRARY=/usr/local/lib/libh3.so" >> "$GITHUB_ENV"
 
       # ALL FAMILIES. A family left out is stripped at preprocess time, so this
       # job would report on a smaller MobilityDB than the one it names. The tier

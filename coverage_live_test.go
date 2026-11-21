@@ -226,6 +226,31 @@ func TestLiveRasterCollection(t *testing.T) {
 		t.Errorf("the January coverage is not a 4 x 2 grid: %s", rec.Body.String())
 	}
 
+	// The same coverage negotiated as netCDF, as /req/netcdf/coverage of the
+	// draft states: a netCDF document, read back by MobilityDB as the 4 x 2
+	// raster of January, and a bbox clipping it as it clips the others.
+	for _, c := range []struct {
+		path          string
+		width, height int
+	}{
+		{"/collections/cov/coverage?datetime=2024-01-15T00:00:00Z", 4, 2},
+		{"/collections/cov/coverage?datetime=2024-01-15T00:00:00Z&bbox=0,0,2,2", 2, 2},
+	} {
+		rec = coverageGet(t, c.path, mediaNetCDF)
+		if rec.Code != 200 || rec.Header().Get("Content-Type") != mediaNetCDF ||
+			!strings.HasPrefix(rec.Body.String(), "CDF") {
+			t.Errorf("%s as netCDF answered %d as %q: %.40q", c.path, rec.Code, rec.Header().Get("Content-Type"),
+				rec.Body.String())
+			continue
+		}
+		var w, h int
+		if err := db.QueryRow(context.Background(), "SELECT width(r), height(r) FROM (SELECT "+
+			"rasterFromGDALRaster($1) r) s", rec.Body.Bytes()).Scan(&w, &h); err != nil ||
+			w != c.width || h != c.height {
+			t.Errorf("%s as netCDF reads back as %d x %d (%v), want %d x %d", c.path, w, h, err, c.width, c.height)
+		}
+	}
+
 	// A bbox over the first tile answers that tile's bounds.
 	rec = coverageGet(t, "/collections/cov/coverage?datetime=2024-01-15T00:00:00Z&bbox=0,0,2,2", mediaCovJSON)
 	if rec.Code != 200 || rec.Header().Get("Content-Bbox") != "0,0,2,2" {

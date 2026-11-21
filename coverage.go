@@ -41,6 +41,7 @@ var coverageConformance = []string{
 	coverageConfBase + "field-selection",
 	coverageConfBase + "geotiff",
 	coverageConfBase + "coveragejson",
+	coverageConfBase + "netcdf",
 }
 
 // The link relations of a coverage collection and the media types of its
@@ -55,16 +56,33 @@ const (
 	// mediaCovJSONEDR is the spelling of CoverageJSON that EDR 1.1
 	// (/req/covjson/content) names, the same document as mediaCovJSON
 	mediaCovJSONEDR = "application/prs.coverage+json"
+	// mediaNetCDF is the media type /req/netcdf/coverage of the Coverages
+	// draft negotiates a netCDF coverage by
+	mediaNetCDF = "application/x-netcdf"
 )
 
 // coverageEncodings are the encodings a coverage is written in, each with the
-// SQL function writing it, in the order a client stating no preference gets
-// them: GeoTIFF first, the type the collection's coverage link states.
-// CoverageJSON is answered in either spelling, the one the client names.
-var coverageEncodings = []struct{ media, fn string }{
-	{mediaGeoTIFF, "asTIFF"},
-	{mediaCovJSON, "asCoverageJSON"},
-	{mediaCovJSONEDR, "asCoverageJSON"},
+// SQL function writing it and, for asGDALRaster, the GDAL format it is called
+// with, in the order a client stating no preference gets them: GeoTIFF first,
+// the type the collection's coverage link states. CoverageJSON is answered in
+// either spelling, the one the client names.
+var coverageEncodings = []struct{ media, fn, format string }{
+	{mediaGeoTIFF, "asTIFF", ""},
+	{mediaCovJSON, "asCoverageJSON", ""},
+	{mediaCovJSONEDR, "asCoverageJSON", ""},
+	{mediaNetCDF, "asGDALRaster", "netCDF"},
+}
+
+// coverageFormat answers the GDAL format the encoding of a media type calls
+// its writer with, as #coverageEncodings states it, "" for a writer taking
+// none.
+func coverageFormat(media string) string {
+	for _, e := range coverageEncodings {
+		if e.media == media {
+			return e.format
+		}
+	}
+	return ""
 }
 
 // coverageSource is what the registry records of a raster collection: its
@@ -226,6 +244,7 @@ func coverageLinks(cid string, inst *coverageInstance) []map[string]string {
 		{"rel": "self", "href": base, "type": "application/json"},
 		{"rel": relCoverage, "href": base + "/coverage", "type": mediaGeoTIFF},
 		{"rel": relCoverage, "href": base + "/coverage", "type": mediaCovJSON},
+		{"rel": relCoverage, "href": base + "/coverage", "type": mediaNetCDF},
 		{"rel": relSchema, "href": base + "/schema", "type": mediaSchema},
 	}
 	if inst != nil {
@@ -524,6 +543,7 @@ type coverageRequest struct {
 	bands     []int  // the bands properties selects, nil for all
 	media     string // the media type negotiated
 	writer    string // the function writing it
+	format    string // the GDAL format asGDALRaster writes it in, "" for none
 }
 
 // parseBbox reads a bbox of four numbers, minLon,minLat,maxLon,maxLat in
@@ -665,8 +685,10 @@ func parseCoverageRequest(r *http.Request, nbands int) (coverageRequest, error) 
 		}
 	}
 	cr.media, cr.writer = negotiateCoverage(r.Header.Get("Accept"))
+	cr.format = coverageFormat(cr.media)
 	if cr.media == "" {
-		return cr, statusErr{406, "a coverage is written as " + mediaGeoTIFF + " or " + mediaCovJSON}
+		return cr, statusErr{406, "a coverage is written as " + mediaGeoTIFF + ", " + mediaCovJSON + " or " +
+			mediaNetCDF}
 	}
 	return cr, nil
 }
@@ -860,6 +882,10 @@ func coverageData(ctx context.Context, src coverageSource, period string, cr cov
 		return nil, nil, 0, err
 	}
 	write := cr.writer + "(c)"
+	if cr.format != "" {
+		// The format is a name of #coverageEncodings, never a request's
+		write = cr.writer + "(c, '" + cr.format + "')"
+	}
 	if cr.writer == "asCoverageJSON" {
 		write = "CAST(" + write + " AS bytea)"
 	}

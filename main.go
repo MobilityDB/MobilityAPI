@@ -425,14 +425,30 @@ func listCollections(w http.ResponseWriter, r *http.Request) {
 			{"rel": "items", "href": "/collections/" + id + "/items"},
 			{"rel": "enclosure", "href": "/collections/" + id + "/export", "type": "application/x-ndjson"},
 		}
-		if itemType != nil && *itemType == coverageItems {
-			links = coverageLinks(id)
-		}
 		cols = append(cols, map[string]any{
 			"id": id, "title": title, "description": desc, "itemType": itemType,
 			"crs":   []string{"http://www.opengis.net/def/crs/EPSG/0/" + itoa(crs)},
 			"links": links,
 		})
+	}
+	rows.Close()
+	// A raster collection is listed with the description #coverageDescription
+	// answers for /collections/{cid}, read once the registry's rows are closed.
+	for i, c := range cols {
+		if it, _ := c["itemType"].(*string); it == nil || *it != coverageItems {
+			continue
+		}
+		id := c["id"].(string)
+		src, ok := coverageMeta(r.Context(), id)
+		if !ok {
+			continue
+		}
+		col, err := coverageDescription(r.Context(), id, src)
+		if err != nil {
+			httpErr(w, errStatus(err, 500), err.Error())
+			return
+		}
+		cols[i] = col
 	}
 	writeJSON(w, 200, map[string]any{
 		"collections": cols,

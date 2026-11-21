@@ -192,34 +192,75 @@ func ensureRegistry(ctx context.Context, tx Tx) error {
 }
 
 // coverageLinks are the links of a raster collection in /collections and in
-// its own description.
+// its own description, each with the rel and type
+// /req/core/rc-collection-info-links of EDR requires: the description, the
+// coverage in each encoding, the schema, and one data link per query of
+// #edrQueries, written as #edrDataQueries writes its links.
 func coverageLinks(cid string) []map[string]string {
-	return []map[string]string{
-		{"rel": "self", "href": "/collections/" + cid},
+	links := []map[string]string{
+		{"rel": "self", "href": "/collections/" + cid, "type": "application/json"},
 		{"rel": relCoverage, "href": "/collections/" + cid + "/coverage", "type": mediaGeoTIFF},
 		{"rel": relCoverage, "href": "/collections/" + cid + "/coverage", "type": mediaCovJSON},
 		{"rel": relSchema, "href": "/collections/" + cid + "/schema", "type": mediaSchema},
 	}
+	for _, q := range edrQueries {
+		links = append(links, map[string]string{"rel": "data", "href": "/collections/" + cid + "/" + q.name,
+			"type": mediaCovJSON, "title": q.name})
+	}
+	return links
 }
 
-// coverageCollection writes the description of a raster collection: its links
-// and its extent, the bounds of its rasters in CRS84 and the span of its
-// periods.
+// coverageCollection writes the description of a raster collection, the one
+// #coverageDescription answers.
 func coverageCollection(w http.ResponseWriter, r *http.Request, cid string, src coverageSource) {
+	col, err := coverageDescription(r.Context(), cid, src)
+	if err != nil {
+		httpErr(w, errStatus(err, 500), err.Error())
+		return
+	}
+	writeJSON(w, 200, col)
+}
+
+// coverageDescription answers the description of a raster collection, which
+// #listCollections lists and #coverageCollection writes, so that the two agree
+// as /req/collections/src-md-success C of EDR requires: its links, its extent
+// (the bounds of its rasters in CRS84 and the span of its periods), the EDR
+// queries it answers and their output formats, and its bands as
+// /req/edr/rc-parameters states parameters, written as asCoverageJSON writes
+// its parameters and keyed by the names #edrBands reads from parameter-name.
+func coverageDescription(ctx context.Context, cid string, src coverageSource) (map[string]any, error) {
 	var title, desc string
 	var srid int
-	if err := db.QueryRow(r.Context(), `SELECT title,description,crs FROM collections WHERE id=$1`, cid).
+	if err := db.QueryRow(ctx, `SELECT title,description,crs FROM collections WHERE id=$1`, cid).
 		Scan(&title, &desc, &srid); err != nil {
-		httpErr(w, 404, "collection not found")
-		return
+		return nil, statusErr{404, "collection not found"}
+	}
+	bands, err := coverageBands(ctx, cid, src)
+	if err != nil {
+		return nil, err
+	}
+	params := map[string]any{}
+	for i, ptype := range bands {
+		key, label := "band"+itoa(i+1), "Band "+itoa(i+1)
+		dataType := "integer"
+		if jsonPixelType(ptype) == "number" {
+			dataType = "float"
+		}
+		params[key] = map[string]any{
+			"type": "Parameter", "id": key, "label": label, "data-type": dataType,
+			"observedProperty": map[string]any{"label": map[string]string{"en": label}},
+		}
 	}
 	col := map[string]any{
 		"id": cid, "title": title, "description": desc, "itemType": coverageItems,
+		"keywords":   []string{coverageItems, src.Type},
 		"crs":        []string{"http://www.opengis.net/def/crs/EPSG/0/" + itoa(srid)},
 		"rasterType": src.Type,
 		"links":      coverageLinks(cid),
 		// The EDR queries the collection answers
-		"data_queries": edrDataQueries(cid),
+		"data_queries":    edrDataQueries(cid),
+		"output_formats":  []string{edrFormat},
+		"parameter_names": params,
 	}
 	if srid != 4326 {
 		col["storageCrs"] = "http://www.opengis.net/def/crs/EPSG/0/" + itoa(srid)
@@ -230,7 +271,7 @@ func coverageCollection(w http.ResponseWriter, r *http.Request, cid string, src 
 		sql := "SELECT Xmin(b),Ymin(b),Xmax(b),Ymax(b),CAST(lower(p) AS text),CAST(upper(p) AS text) FROM (" +
 			"SELECT transform(extent(stbox(" + ident(src.Raster) + ")), 4326) b, extent(" +
 			ident(src.Time) + ") p FROM " + ident(src.Table) + ") s"
-		if err := db.QueryRow(r.Context(), sql).Scan(&xmin, &ymin, &xmax, &ymax, &tmin, &tmax); err == nil &&
+		if err := db.QueryRow(ctx, sql).Scan(&xmin, &ymin, &xmax, &ymax, &tmin, &tmax); err == nil &&
 			xmin != nil && tmin != nil {
 			col["extent"] = map[string]any{
 				"spatial": map[string]any{"bbox": [][]float64{{*xmin, *ymin, *xmax, *ymax}},
@@ -240,7 +281,7 @@ func coverageCollection(w http.ResponseWriter, r *http.Request, cid string, src 
 			}
 		}
 	}
-	writeJSON(w, 200, col)
+	return col, nil
 }
 
 // coverageSchema writes the fields of a raster collection, its bands, as
@@ -254,28 +295,15 @@ func coverageSchema(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, 404, "no raster collection "+cid)
 		return
 	}
-	nbands := 1
-	if rasterHas(src.Type, "numBands") {
-		if err := db.QueryRow(r.Context(), "SELECT numBands("+ident(src.Raster)+") FROM "+
-			ident(src.Table)+" ORDER BY "+ident(src.Time)+" DESC LIMIT 1").Scan(&nbands); err != nil {
-			httpErr(w, 404, "the raster collection "+cid+" holds no raster")
-			return
-		}
+	bands, err := coverageBands(r.Context(), cid, src)
+	if err != nil {
+		httpErr(w, errStatus(err, 500), err.Error())
+		return
 	}
 	props := map[string]any{}
-	seq := make([]string, 0, nbands)
-	for b := 1; b <= nbands; b++ {
-		var ptype string
-		sql := "SELECT bandPixelType(" + ident(src.Raster) + ", " + itoa(b) + ") FROM " +
-			ident(src.Table) + " ORDER BY " + ident(src.Time) + " DESC LIMIT 1"
-		if src.Type != "raster" {
-			sql = "SELECT bandPixelType(" + ident(src.Raster) + ") FROM " + ident(src.Table) +
-				" ORDER BY " + ident(src.Time) + " DESC LIMIT 1"
-		}
-		if err := db.QueryRow(r.Context(), sql).Scan(&ptype); err != nil {
-			httpErr(w, 500, err.Error())
-			return
-		}
+	seq := make([]string, 0, len(bands))
+	for i, ptype := range bands {
+		b := i + 1
 		key := "band" + itoa(b)
 		props[key] = map[string]any{"title": "Band " + itoa(b), "type": jsonPixelType(ptype),
 			"x-ogc-pixelType": ptype}
@@ -287,6 +315,35 @@ func coverageSchema(w http.ResponseWriter, r *http.Request) {
 		"$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object",
 		"title": cid, "properties": props, "x-ogc-propertySeq": seq,
 	})
+}
+
+// coverageBands answers the pixel type of each band of a raster collection, in
+// band order, read by numBands and bandPixelType from a raster of the period
+// that ends last, the raster #coverageSchema and #coverageDescription both
+// describe.
+func coverageBands(ctx context.Context, cid string, src coverageSource) ([]string, error) {
+	nbands := 1
+	if rasterHas(src.Type, "numBands") {
+		if err := db.QueryRow(ctx, "SELECT numBands("+ident(src.Raster)+") FROM "+
+			ident(src.Table)+" ORDER BY "+ident(src.Time)+" DESC LIMIT 1").Scan(&nbands); err != nil {
+			return nil, statusErr{404, "the raster collection " + cid + " holds no raster"}
+		}
+	}
+	out := make([]string, 0, nbands)
+	for b := 1; b <= nbands; b++ {
+		var ptype string
+		sql := "SELECT bandPixelType(" + ident(src.Raster) + ", " + itoa(b) + ") FROM " +
+			ident(src.Table) + " ORDER BY " + ident(src.Time) + " DESC LIMIT 1"
+		if src.Type != "raster" {
+			sql = "SELECT bandPixelType(" + ident(src.Raster) + ") FROM " + ident(src.Table) +
+				" ORDER BY " + ident(src.Time) + " DESC LIMIT 1"
+		}
+		if err := db.QueryRow(ctx, sql).Scan(&ptype); err != nil {
+			return nil, err
+		}
+		out = append(out, ptype)
+	}
+	return out, nil
 }
 
 // jsonPixelType answers the JSON Schema type of a pixel type, an integer for

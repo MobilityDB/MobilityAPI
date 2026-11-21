@@ -261,9 +261,16 @@ func routeTable() []route {
 		{"GET", "/collections/{cid}/items/{fid}/tgsequence/queries/{qid}/stream", streamQuery, extension},
 		{"DELETE", "/collections/{cid}/items/{fid}/tgsequence/queries/{qid}", deleteQuery, extension},
 	}
-	// OGC API - EDR: the queries of a raster collection.
+	// OGC API - EDR: the queries of a raster collection, its instances, one per
+	// period, and the queries of each instance.
 	for _, q := range edrQueries {
 		rs = append(rs, route{"GET", "/collections/{cid}/" + q.name, edrQuery(q.name), edrConformance})
+	}
+	rs = append(rs, route{"GET", "/collections/{cid}/instances", listInstances, edrConformance},
+		route{"GET", "/collections/{cid}/instances/{iid}", getInstance, edrConformance})
+	for _, q := range edrQueries {
+		rs = append(rs, route{"GET", "/collections/{cid}/instances/{iid}/" + q.name, edrQuery(q.name),
+			edrConformance})
 	}
 	return rs
 }
@@ -443,7 +450,7 @@ func listCollections(w http.ResponseWriter, r *http.Request) {
 		if !ok {
 			continue
 		}
-		col, err := coverageDescription(r.Context(), id, src)
+		col, err := coverageDescription(r.Context(), id, src, nil)
 		if err != nil {
 			httpErr(w, errStatus(err, 500), err.Error())
 			return

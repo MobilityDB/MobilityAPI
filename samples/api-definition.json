@@ -137,6 +137,17 @@
         "x-conformance-class": "https://www.opengis.net/spec/ogcapi-coverages-1/1.0/conf/core"
       }
     },
+    "/collections/{cid}/cube": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "summary": "OGC API - EDR: the cube query over a raster collection, bbox minLon,minLat,maxLon,maxLat in CRS84 and z, answered in CoverageJSON",
+        "x-conformance-class": "http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/core"
+      }
+    },
     "/collections/{cid}/export": {
       "get": {
         "responses": {
@@ -146,6 +157,94 @@
         },
         "summary": "Bulk lakehouse export: NDJSON, or ?format=parquet (WKB + bbox/time sidecar)",
         "x-mobilityapi-extension": true
+      }
+    },
+    "/collections/{cid}/instances": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "summary": "OGC API - EDR: the instances of a raster collection, one per period",
+        "x-conformance-class": "http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/core"
+      }
+    },
+    "/collections/{cid}/instances/{iid}": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "summary": "OGC API - EDR: one instance of a raster collection, a period, described as a collection",
+        "x-conformance-class": "http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/core"
+      }
+    },
+    "/collections/{cid}/instances/{iid}/area": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "summary": "OGC API - EDR: the area query over one period of a raster collection, coords a WKT POLYGON, answered in CoverageJSON",
+        "x-conformance-class": "http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/core"
+      }
+    },
+    "/collections/{cid}/instances/{iid}/corridor": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "summary": "OGC API - EDR: the corridor query over one period of a raster collection, coords a WKT LINESTRING, answered in CoverageJSON",
+        "x-conformance-class": "http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/core"
+      }
+    },
+    "/collections/{cid}/instances/{iid}/cube": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "summary": "OGC API - EDR: the cube query over one period of a raster collection, bbox minLon,minLat,maxLon,maxLat in CRS84 and z, answered in CoverageJSON",
+        "x-conformance-class": "http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/core"
+      }
+    },
+    "/collections/{cid}/instances/{iid}/position": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "summary": "OGC API - EDR: the position query over one period of a raster collection, coords a WKT POINT, answered in CoverageJSON",
+        "x-conformance-class": "http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/core"
+      }
+    },
+    "/collections/{cid}/instances/{iid}/radius": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "summary": "OGC API - EDR: the radius query over one period of a raster collection, coords a WKT POINT, answered in CoverageJSON",
+        "x-conformance-class": "http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/core"
+      }
+    },
+    "/collections/{cid}/instances/{iid}/trajectory": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "summary": "OGC API - EDR: the trajectory query over one period of a raster collection, coords a WKT LINESTRING, answered in CoverageJSON",
+        "x-conformance-class": "http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/core"
       }
     },
     "/collections/{cid}/items": {
@@ -612,6 +711,17 @@
           }
         },
         "summary": "OGC API - EDR: the position query over a raster collection, coords a WKT POINT, answered in CoverageJSON",
+        "x-conformance-class": "http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/core"
+      }
+    },
+    "/collections/{cid}/radius": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "summary": "OGC API - EDR: the radius query over a raster collection, coords a WKT POINT, answered in CoverageJSON",
         "x-conformance-class": "http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/core"
       }
     },

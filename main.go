@@ -401,7 +401,7 @@ func conformsTo() []string {
 	classes := append([]string{
 		confMFCommon, confMFCollection, confMovingFeatures, confCQuery, confCommonCore, confCommonLanding,
 		confCommonCollections,
-	}, append(coverageConformance, edrConformance)...)
+	}, append(coverageConformance, edrConformance, edrCovJSONConformance)...)
 	var out []string
 	for _, c := range classes {
 		out = append(out, c)

@@ -27,12 +27,17 @@ import (
 	"strings"
 )
 
-// The conformance class of EDR the tier declares: the core, which
-// /req/core/conformance names. The class queries of 1.1 holds eight queries, each
-// one a server MAY answer, and the tier answers six; the class covjson of 1.1
-// names CoverageJSON application/prs.coverage+json, where the tier writes
-// application/vnd.cov+json, the type OGC CoverageJSON (OGC 21-069r2) defines.
-const edrConformance = "http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/core"
+// The conformance classes of EDR the tier declares: the core, which
+// /req/core/conformance names, and covjson, whose /req/covjson/content names
+// CoverageJSON application/prs.coverage+json: an answer is written in that
+// spelling where the client names it, and otherwise as
+// application/vnd.cov+json, the type OGC CoverageJSON (OGC 21-069r2) defines
+// (#edrMedia). The class queries of 1.1 holds eight queries, each one a server
+// MAY answer, and the tier answers six.
+const (
+	edrConformance        = "http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/core"
+	edrCovJSONConformance = "http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/covjson"
+)
 
 // The queries a raster collection answers, with the WKT geometry each reads
 // from coords; cube reads a bbox and no coords.
@@ -129,10 +134,21 @@ func edrQuery(query string) http.HandlerFunc {
 			httpErr(w, errStatus(err, 400), err.Error())
 			return
 		}
-		w.Header().Set("Content-Type", mediaCovJSON)
+		w.Header().Set("Content-Type", edrMedia(r.Header.Get("Accept")))
 		w.WriteHeader(200)
 		w.Write(data)
 	}
+}
+
+// edrMedia answers the spelling of CoverageJSON an EDR answer is written in,
+// negotiated as #negotiateCoverage negotiates a coverage: the one the client's
+// Accept names, application/vnd.cov+json, the type OGC CoverageJSON (OGC
+// 21-069r2) states, wherever it names neither.
+func edrMedia(accept string) string {
+	if media, _ := negotiateCoverage(accept); media == mediaCovJSONEDR {
+		return mediaCovJSONEDR
+	}
+	return mediaCovJSON
 }
 
 // edrCoords checks that coords is WKT of the geometry type a query reads, in

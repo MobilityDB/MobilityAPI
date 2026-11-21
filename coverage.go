@@ -52,14 +52,19 @@ const (
 	mediaCovJSON  = "application/vnd.cov+json"
 	mediaSchema   = "application/schema+json"
 	coverageItems = "coverage"
+	// mediaCovJSONEDR is the spelling of CoverageJSON that EDR 1.1
+	// (/req/covjson/content) names, the same document as mediaCovJSON
+	mediaCovJSONEDR = "application/prs.coverage+json"
 )
 
 // coverageEncodings are the encodings a coverage is written in, each with the
 // SQL function writing it, in the order a client stating no preference gets
 // them: GeoTIFF first, the type the collection's coverage link states.
+// CoverageJSON is answered in either spelling, the one the client names.
 var coverageEncodings = []struct{ media, fn string }{
 	{mediaGeoTIFF, "asTIFF"},
 	{mediaCovJSON, "asCoverageJSON"},
+	{mediaCovJSONEDR, "asCoverageJSON"},
 }
 
 // coverageSource is what the registry records of a raster collection: its

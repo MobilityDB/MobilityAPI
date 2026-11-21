@@ -159,8 +159,36 @@ func TestLiveRasterEDRQueries(t *testing.T) {
 		}
 	}
 	rec = atsDo(t, mux, "GET", "/conformance", "")
-	if !strings.Contains(rec.Body.String(), edrConformance) {
-		t.Errorf("the conformance declaration does not name %s", edrConformance)
+	for _, c := range []string{edrConformance, edrCovJSONConformance} {
+		if !strings.Contains(rec.Body.String(), c) {
+			t.Errorf("the conformance declaration does not name %s", c)
+		}
+	}
+
+	// CoverageJSON is written in the spelling the client names: EDR 1.1's
+	// application/prs.coverage+json, which /req/covjson/content states, or
+	// application/vnd.cov+json, OGC CoverageJSON's, which is also the answer
+	// to a client naming neither, alike on an EDR query and on /coverage.
+	position := "/collections/cov/position?coords=POINT(0.5%201)&datetime=2024-01-15T00:00:00Z"
+	coverage := "/collections/cov/coverage?datetime=2024-01-15T00:00:00Z"
+	for _, c := range []struct{ path, accept, want string }{
+		{position, mediaCovJSONEDR, mediaCovJSONEDR},
+		{position, mediaCovJSON, mediaCovJSON},
+		{position, "", mediaCovJSON},
+		{position, "*/*", mediaCovJSON},
+		{position, mediaCovJSON + ", " + mediaCovJSONEDR, mediaCovJSON},
+		{coverage, mediaCovJSONEDR, mediaCovJSONEDR},
+		{coverage, mediaCovJSON, mediaCovJSON},
+	} {
+		rec := coverageGet(t, c.path, c.accept)
+		if rec.Code != 200 || rec.Header().Get("Content-Type") != c.want {
+			t.Errorf("%s with Accept %q answered %d as %s, want 200 as %s", c.path, c.accept, rec.Code,
+				rec.Header().Get("Content-Type"), c.want)
+			continue
+		}
+		if domain, _, _ := edrCoverage(t, rec.Body.String()); domain == "" {
+			t.Errorf("%s with Accept %q answered no CoverageJSON domain: %s", c.path, c.accept, rec.Body.String())
+		}
 	}
 
 	// The instances are the two periods, January and February, in time order,

@@ -15,7 +15,13 @@
     "method": "GET",
     "path": "/collections",
     "conformanceClass": "http://www.opengis.net/spec/ogcapi-movingfeatures-1/1.0/conf/mf-collection",
-    "functions": []
+    "functions": [
+      "bandPixelType",
+      "extent",
+      "numBands",
+      "stbox",
+      "transform"
+    ]
   },
   {
     "method": "POST",
@@ -36,7 +42,9 @@
     "path": "/collections/{cid}",
     "conformanceClass": "http://www.opengis.net/spec/ogcapi-movingfeatures-1/1.0/conf/mf-collection",
     "functions": [
+      "bandPixelType",
       "extent",
+      "numBands",
       "stbox",
       "transform"
     ]

@@ -121,6 +121,77 @@ func TestLiveRasterCollection(t *testing.T) {
 		t.Errorf("the temporal extent is %v, want 2024-01-01 to 2024-03-01", iv)
 	}
 
+	// The description carries what /req/edr/rc-collection-info and
+	// collection.yaml of EDR 1.1 require: every link with its rel and type, a
+	// data link per query, the output formats, and the band as a Parameter
+	// keyed as parameter-name reads it. enc compares decoded members as their
+	// JSON encodings.
+	enc := func(v any) string { b, _ := json.Marshal(v); return string(b) }
+	var edr struct {
+		Links []struct {
+			Rel, Href, Type string
+		}
+		OutputFormats  []string                  `json:"output_formats"`
+		Keywords       []string                  `json:"keywords"`
+		ParameterNames map[string]map[string]any `json:"parameter_names"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &edr); err != nil {
+		t.Fatalf("reading the description: %v", err)
+	}
+	data := map[string]bool{}
+	for _, l := range edr.Links {
+		if l.Type == "" {
+			t.Errorf("the link %s %s has no type", l.Rel, l.Href)
+		}
+		if l.Rel == "data" && l.Type == mediaCovJSON {
+			data[l.Href] = true
+		}
+	}
+	for _, q := range edrQueries {
+		if !data["/collections/cov/"+q.name] {
+			t.Errorf("the description has no data link to the %s query: %+v", q.name, edr.Links)
+		}
+	}
+	if len(edr.OutputFormats) != 1 || edr.OutputFormats[0] != edrFormat {
+		t.Errorf("output_formats is %v, want [%s]", edr.OutputFormats, edrFormat)
+	}
+	if len(edr.Keywords) == 0 {
+		t.Errorf("the description has no keywords")
+	}
+	if p := edr.ParameterNames["band1"]; len(edr.ParameterNames) != 1 || p["type"] != "Parameter" ||
+		p["id"] != "band1" || p["data-type"] != "integer" ||
+		!strings.Contains(enc(p["observedProperty"]), `"label":{"en":"Band 1"}`) {
+		t.Errorf("parameter_names is %v, want band1 an integer Parameter labelled Band 1", edr.ParameterNames)
+	}
+
+	// /collections lists the collection with the id, title, description and
+	// extent of its own description, as /req/collections/src-md-success C
+	// requires.
+	rec = atsDo(t, mux, "GET", "/collections", "")
+	var list struct{ Collections []map[string]any }
+	if err := json.Unmarshal(rec.Body.Bytes(), &list); err != nil || rec.Code != 200 {
+		t.Fatalf("listing the collections answered %d: %s", rec.Code, rec.Body.String())
+	}
+	var own map[string]any
+	if err := json.Unmarshal(atsDo(t, mux, "GET", "/collections/cov", "").Body.Bytes(), &own); err != nil {
+		t.Fatalf("reading the description: %v", err)
+	}
+	found := false
+	for _, c := range list.Collections {
+		if c["id"] != "cov" {
+			continue
+		}
+		found = true
+		for _, k := range []string{"id", "title", "description", "extent", "parameter_names", "output_formats"} {
+			if enc(c[k]) != enc(own[k]) {
+				t.Errorf("/collections states %s as %s, /collections/cov as %s", k, enc(c[k]), enc(own[k]))
+			}
+		}
+	}
+	if !found {
+		t.Errorf("/collections does not list cov: %s", rec.Body.String())
+	}
+
 	// The schema lists the one band.
 	rec = coverageGet(t, "/collections/cov/schema", "")
 	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"band1"`) ||

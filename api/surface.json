@@ -114,6 +114,23 @@
   },
   {
     "method": "GET",
+    "path": "/collections/{cid}/cube",
+    "conformanceClass": "http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/core",
+    "functions": [
+      "SRID",
+      "asCoverageJSON",
+      "clip",
+      "extent",
+      "rasterTileValue",
+      "rasterUnion",
+      "rasterValue",
+      "stbox",
+      "timeSpan",
+      "transform"
+    ]
+  },
+  {
+    "method": "GET",
     "path": "/collections/{cid}/export",
     "extension": true,
     "functions": [
@@ -122,6 +139,132 @@
       "atTime",
       "eIntersects",
       "stbox"
+    ]
+  },
+  {
+    "method": "GET",
+    "path": "/collections/{cid}/instances",
+    "conformanceClass": "http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/core",
+    "functions": [
+      "bandPixelType",
+      "extent",
+      "numBands",
+      "stbox",
+      "transform"
+    ]
+  },
+  {
+    "method": "GET",
+    "path": "/collections/{cid}/instances/{iid}",
+    "conformanceClass": "http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/core",
+    "functions": [
+      "bandPixelType",
+      "extent",
+      "numBands",
+      "stbox",
+      "transform"
+    ]
+  },
+  {
+    "method": "GET",
+    "path": "/collections/{cid}/instances/{iid}/area",
+    "conformanceClass": "http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/core",
+    "functions": [
+      "SRID",
+      "asCoverageJSON",
+      "clip",
+      "extent",
+      "rasterTileValue",
+      "rasterUnion",
+      "rasterValue",
+      "stbox",
+      "timeSpan",
+      "transform"
+    ]
+  },
+  {
+    "method": "GET",
+    "path": "/collections/{cid}/instances/{iid}/corridor",
+    "conformanceClass": "http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/core",
+    "functions": [
+      "SRID",
+      "asCoverageJSON",
+      "clip",
+      "extent",
+      "rasterTileValue",
+      "rasterUnion",
+      "rasterValue",
+      "stbox",
+      "timeSpan",
+      "transform"
+    ]
+  },
+  {
+    "method": "GET",
+    "path": "/collections/{cid}/instances/{iid}/cube",
+    "conformanceClass": "http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/core",
+    "functions": [
+      "SRID",
+      "asCoverageJSON",
+      "clip",
+      "extent",
+      "rasterTileValue",
+      "rasterUnion",
+      "rasterValue",
+      "stbox",
+      "timeSpan",
+      "transform"
+    ]
+  },
+  {
+    "method": "GET",
+    "path": "/collections/{cid}/instances/{iid}/position",
+    "conformanceClass": "http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/core",
+    "functions": [
+      "SRID",
+      "asCoverageJSON",
+      "clip",
+      "extent",
+      "rasterTileValue",
+      "rasterUnion",
+      "rasterValue",
+      "stbox",
+      "timeSpan",
+      "transform"
+    ]
+  },
+  {
+    "method": "GET",
+    "path": "/collections/{cid}/instances/{iid}/radius",
+    "conformanceClass": "http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/core",
+    "functions": [
+      "SRID",
+      "asCoverageJSON",
+      "clip",
+      "extent",
+      "rasterTileValue",
+      "rasterUnion",
+      "rasterValue",
+      "stbox",
+      "timeSpan",
+      "transform"
+    ]
+  },
+  {
+    "method": "GET",
+    "path": "/collections/{cid}/instances/{iid}/trajectory",
+    "conformanceClass": "http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/core",
+    "functions": [
+      "SRID",
+      "asCoverageJSON",
+      "clip",
+      "extent",
+      "rasterTileValue",
+      "rasterUnion",
+      "rasterValue",
+      "stbox",
+      "timeSpan",
+      "transform"
     ]
   },
   {
@@ -335,6 +478,23 @@
   {
     "method": "GET",
     "path": "/collections/{cid}/position",
+    "conformanceClass": "http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/core",
+    "functions": [
+      "SRID",
+      "asCoverageJSON",
+      "clip",
+      "extent",
+      "rasterTileValue",
+      "rasterUnion",
+      "rasterValue",
+      "stbox",
+      "timeSpan",
+      "transform"
+    ]
+  },
+  {
+    "method": "GET",
+    "path": "/collections/{cid}/radius",
     "conformanceClass": "http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/core",
     "functions": [
       "SRID",

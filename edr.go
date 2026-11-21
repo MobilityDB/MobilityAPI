@@ -10,8 +10,10 @@ package main
 // - /trajectory reads them along a LINESTRINGM, whose M ordinate is the
 //   number of seconds since the Unix epoch, as tgeompoint(geometry) reads it,
 //   written as a Trajectory;
-// - /area clips the raster of one period to a POLYGON and /corridor to the
-//   buffer of a path by its width, each a Grid, as a coverage is one period.
+// - /area clips the raster of one period to a POLYGON, /corridor to the
+//   buffer of a path by its width, /radius to the buffer of a POINT by its
+//   within distance and /cube to a bbox, each a Grid, as a coverage is one
+//   period.
 //
 // The values along a point or a path are read across the periods of the
 // collection by the series reader over the rasters and their periods, so a
@@ -27,15 +29,18 @@ import (
 
 // The conformance class of EDR the tier declares: the core, which
 // /req/core/conformance names. The class queries of 1.1 holds eight queries, each
-// one a server MAY answer, and the tier answers four; the class covjson of 1.1
+// one a server MAY answer, and the tier answers six; the class covjson of 1.1
 // names CoverageJSON application/prs.coverage+json, where the tier writes
 // application/vnd.cov+json, the type OGC CoverageJSON (OGC 21-069r2) defines.
 const edrConformance = "http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/core"
 
-// The queries a raster collection answers, with the WKT geometry each reads.
+// The queries a raster collection answers, with the WKT geometry each reads
+// from coords; cube reads a bbox and no coords.
 var edrQueries = []struct{ name, geometry string }{
 	{"position", "POINT"},
+	{"radius", "POINT"},
 	{"area", "POLYGON"},
+	{"cube", ""},
 	{"trajectory", "LINESTRING"},
 	{"corridor", "LINESTRING"},
 }
@@ -43,29 +48,41 @@ var edrQueries = []struct{ name, geometry string }{
 // edrFormat is the one output format, as f names it.
 const edrFormat = "CoverageJSON"
 
-// edrWidthUnits are the units corridor-width is given in, with the metres in
-// one.
+// edrWidthUnits are the units corridor-width and within are given in, with the
+// metres in one.
 var edrWidthUnits = map[string]float64{"m": 1, "km": 1000}
+
+// edrDistanceUnits are the units of edrWidthUnits, as the description's
+// distanceunits and the variables of a query state them.
+var edrDistanceUnits = []string{"km", "m"}
 
 // edrDataQueries is the data_queries member of a raster collection's
 // description, beside the links #coverageLinks states: one link per query, its
-// variables as /req/edr/rc-common-variables states them, the corridor's with
-// its units. A raster has no vertical axis, so a corridor's height is read and
-// not applied, which its variables state.
-func edrDataQueries(cid string) map[string]any {
+// variables as /req/edr/rc-common-variables states them, the corridor's and the
+// radius's with their units. A raster has no vertical axis, so a corridor's
+// height and a cube's z are read and not applied, which their variables state.
+// The links are under base, the path of the collection or of an instance, as
+// #coverageLinks writes its data links under the same base.
+func edrDataQueries(base string) map[string]any {
 	out := map[string]any{}
 	for _, q := range edrQueries {
 		vars := map[string]any{
 			"query_type": q.name, "output_formats": []string{edrFormat},
 			"default_output_format": edrFormat,
 		}
-		if q.name == "corridor" {
-			vars["width_units"] = []string{"km", "m"}
+		switch q.name {
+		case "corridor":
+			vars["width_units"] = edrDistanceUnits
 			vars["height_units"] = []string{"m"}
 			vars["description"] = "The coverage has no vertical axis: corridor-height is read and not applied."
+		case "radius":
+			vars["within_units"] = edrDistanceUnits
+		case "cube":
+			vars["height_units"] = []string{"m"}
+			vars["description"] = "The coverage has no vertical axis: z is read and not applied."
 		}
 		out[q.name] = map[string]any{"link": map[string]any{
-			"href": "/collections/" + cid + "/" + q.name, "rel": "data", "variables": vars,
+			"href": base + "/" + q.name, "rel": "data", "variables": vars,
 		}}
 	}
 	return out
@@ -73,7 +90,8 @@ func edrDataQueries(cid string) map[string]any {
 
 // edrQuery answers GET /collections/{cid}/{query}, as #getCoverage answers
 // /coverage: the raster collection read, f checked, and the query's answer
-// written in CoverageJSON.
+// written in CoverageJSON. Under /collections/{cid}/instances/{iid}/{query} it
+// reads the period of that instance alone (#coverageSource from).
 func edrQuery(query string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		cid := r.PathValue("cid")
@@ -82,13 +100,21 @@ func edrQuery(query string) http.HandlerFunc {
 			httpErr(w, 404, "no raster collection "+cid)
 			return
 		}
+		if iid := r.PathValue("iid"); iid != "" {
+			inst, err := coverageInstanceByID(r.Context(), cid, src, iid)
+			if err != nil {
+				httpErr(w, errStatus(err, 500), err.Error())
+				return
+			}
+			src.Period = inst.Period
+		}
 		q := r.URL.Query()
 		if f := first(q, "f"); f != "" && !strings.EqualFold(f, edrFormat) {
 			httpErr(w, 400, "f="+f+" is not an output format of the collection; it is "+edrFormat)
 			return
 		}
 		coords := first(q, "coords")
-		if coords == "" {
+		if coords == "" && query != "cube" {
 			httpErr(w, 400, "the "+query+" query needs coords, a WKT geometry")
 			return
 		}
@@ -198,7 +224,7 @@ func edrAlong(ctx context.Context, cid string, src coverageSource, query, coords
 		if dt == "" {
 			var lo, hi *string
 			if err := db.QueryRow(ctx, "SELECT CAST(lower(p) AS text), CAST(upper(p) AS text) FROM ("+
-				"SELECT extent("+ident(src.Time)+") p FROM "+ident(src.Table)+") s").Scan(&lo, &hi); err != nil ||
+				"SELECT extent("+ident(src.Time)+") p FROM "+src.from()+") s").Scan(&lo, &hi); err != nil ||
 				lo == nil {
 				return nil, statusErr{404, "the raster collection holds no raster"}
 			}
@@ -225,7 +251,7 @@ func edrAlong(ctx context.Context, cid string, src coverageSource, query, coords
 	}
 	read += ")"
 	sql := "SELECT asCoverageJSON(" + read + ", t) FROM (SELECT " + traj + " AS t) p, " +
-		ident(src.Table) + " WHERE " + ident(src.Time) + " && timeSpan(t) GROUP BY t"
+		src.from() + " WHERE " + ident(src.Time) + " && timeSpan(t) GROUP BY t"
 	var text *string
 	if err := db.QueryRow(ctx, sql, args...).Scan(&text); err != nil {
 		if strings.Contains(err.Error(), "no rows") {
@@ -240,33 +266,57 @@ func edrAlong(ctx context.Context, cid string, src coverageSource, query, coords
 }
 
 // edrClip answers /area and /corridor: the raster of one period clipped to a
-// polygon, or to the buffer of a path by the corridor's width, a Grid written
-// by #coverageData as /coverage writes a clipped raster.
+// polygon, to the buffer of a path by the corridor's width or of a point by the
+// radius's within distance, or to the bbox of a cube, a Grid written by
+// #coverageData as /coverage writes a clipped raster.
 func edrClip(ctx context.Context, src coverageSource, query, coords string,
 	q map[string][]string) ([]byte, error) {
-	want := map[string]string{"area": "POLYGON", "corridor": "LINESTRING"}[query]
-	if err := edrCoords(ctx, query, want, coords); err != nil {
-		return nil, err
-	}
-	region := "transform(ST_GeomFromText($2, 4326), SRID(r))"
-	if query == "corridor" {
-		for _, p := range []string{"corridor-width", "width-units", "corridor-height", "height-units"} {
+	cr := coverageRequest{regionArg: coords, writer: "asCoverageJSON"}
+	switch query {
+	case "cube":
+		// The bbox is read as /coverage reads one; a raster has no vertical
+		// axis, so z, which /req/edr/rc-cube G requires, is read and not applied
+		for _, p := range []string{"bbox", "z"} {
 			if first(q, p) == "" {
-				return nil, statusErr{400, "the corridor query needs " + p}
+				return nil, statusErr{400, "the cube query needs " + p}
 			}
 		}
-		width, err := strconv.ParseFloat(first(q, "corridor-width"), 64)
-		if err != nil || width <= 0 {
-			return nil, statusErr{400, "corridor-width is a positive number"}
+		bbox, err := parseBbox(first(q, "bbox"))
+		if err != nil {
+			return nil, err
 		}
-		perUnit, ok := edrWidthUnits[strings.ToLower(first(q, "width-units"))]
+		cr.bbox = bbox
+	case "area":
+		if err := edrCoords(ctx, query, "POLYGON", coords); err != nil {
+			return nil, err
+		}
+		cr.region = "transform(ST_GeomFromText($2, 4326), SRID(r))"
+	case "corridor", "radius":
+		want, dist, units, required := "LINESTRING", "corridor-width", "width-units",
+			[]string{"corridor-width", "width-units", "corridor-height", "height-units"}
+		if query == "radius" {
+			want, dist, units, required = "POINT", "within", "within-units", []string{"within", "within-units"}
+		}
+		if err := edrCoords(ctx, query, want, coords); err != nil {
+			return nil, err
+		}
+		for _, p := range required {
+			if first(q, p) == "" {
+				return nil, statusErr{400, "the " + query + " query needs " + p}
+			}
+		}
+		d, err := strconv.ParseFloat(first(q, dist), 64)
+		if err != nil || d <= 0 {
+			return nil, statusErr{400, dist + " is a positive number"}
+		}
+		perUnit, ok := edrWidthUnits[strings.ToLower(first(q, units))]
 		if !ok {
-			return nil, statusErr{400, "width-units is one of km, m"}
+			return nil, statusErr{400, units + " is one of " + strings.Join(edrDistanceUnits, ", ")}
 		}
 		// The buffer is taken on the sphere, in metres, then read in the
 		// rasters' system
-		region = "transform(CAST(ST_Buffer(CAST(ST_Force2D(ST_GeomFromText($2, 4326)) AS geography), " +
-			strconv.FormatFloat(width*perUnit, 'g', -1, 64) + ") AS geometry), SRID(r))"
+		cr.region = "transform(CAST(ST_Buffer(CAST(ST_Force2D(ST_GeomFromText($2, 4326)) AS geography), " +
+			strconv.FormatFloat(d*perUnit, 'g', -1, 64) + ") AS geometry), SRID(r))"
 	}
 	bands, err := edrBands(q)
 	if err != nil {
@@ -282,8 +332,8 @@ func edrClip(ctx context.Context, src coverageSource, query, coords string,
 	if err != nil {
 		return nil, err
 	}
-	data, _, _, err := coverageData(ctx, src, period, coverageRequest{
-		region: region, regionArg: coords, bands: bands, writer: "asCoverageJSON"})
+	cr.bands = bands
+	data, _, _, err := coverageData(ctx, src, period, cr)
 	return data, err
 }
 
@@ -292,12 +342,26 @@ func edrClip(ctx context.Context, src coverageSource, query, coords string,
 func edrPaths() map[string]any {
 	out := map[string]any{}
 	for _, q := range edrQueries {
+		reads := "coords a WKT " + q.geometry
+		if q.geometry == "" {
+			reads = "bbox minLon,minLat,maxLon,maxLat in CRS84 and z"
+		}
 		out["/collections/{cid}/"+q.name] = map[string]any{"get": map[string]any{"summary": fmt.Sprintf(
-			"OGC API - EDR: the %s query over a raster collection, coords a WKT %s, answered in CoverageJSON",
-			q.name, q.geometry),
+			"OGC API - EDR: the %s query over a raster collection, %s, answered in CoverageJSON",
+			q.name, reads),
 			// Every operation of an OpenAPI 3.0 document states its responses, as
 			// the operations #apiDoc writes do.
 			"responses": map[string]any{"200": map[string]any{"description": "OK"}}}}
+		out["/collections/{cid}/instances/{iid}/"+q.name] = map[string]any{"get": map[string]any{
+			"summary": fmt.Sprintf("OGC API - EDR: the %s query over one period of a raster collection, "+
+				"%s, answered in CoverageJSON", q.name, reads),
+			"responses": map[string]any{"200": map[string]any{"description": "OK"}}}}
 	}
+	out["/collections/{cid}/instances"] = map[string]any{"get": map[string]any{
+		"summary":   "OGC API - EDR: the instances of a raster collection, one per period",
+		"responses": map[string]any{"200": map[string]any{"description": "OK"}}}}
+	out["/collections/{cid}/instances/{iid}"] = map[string]any{"get": map[string]any{
+		"summary":   "OGC API - EDR: one instance of a raster collection, a period, described as a collection",
+		"responses": map[string]any{"200": map[string]any{"description": "OK"}}}}
 	return out
 }

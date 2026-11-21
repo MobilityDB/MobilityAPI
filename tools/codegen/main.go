@@ -176,7 +176,10 @@ const rasterFamily = "RASTER"
 // The raster types are the SQL types of the structs of the family: a struct
 // states the function reading its text form, and that function's SQL signature
 // answers the type, so `raster` and `raquet` are read from the catalog rather
-// than listed here.
+// than listed here. A struct whose reader states no SQL signature is no type a
+// raster collection holds: BandStats is read and written as the summarystats
+// record PostGIS defines, which a function answers and no column is, the set
+// tools/raster_matrix.py names as RASTER_TYPES.
 //
 // The functions are those MobilityDB/MobilityDB tools/raster_matrix.py counts
 // as the raster surface, by the same rule: the public functions of the family
@@ -202,9 +205,12 @@ func rasterFunctions(c catalog) (map[string][]string, error) {
 			continue
 		}
 		in, ok := byName[s.Serialization.In]
-		if !ok || len(in.SQLSignatures) == 0 || in.SQLSignatures[0].Ret == "" {
-			return nil, fmt.Errorf("the struct %s reads its text form with %s, which "+
-				"states no SQL signature answering a type", s.Name, s.Serialization.In)
+		if !ok {
+			return nil, fmt.Errorf("the struct %s reads its text form with %s, which the "+
+				"catalog does not declare", s.Name, s.Serialization.In)
+		}
+		if len(in.SQLSignatures) == 0 || in.SQLSignatures[0].Ret == "" {
+			continue
 		}
 		have[in.SQLSignatures[0].Ret] = map[string]bool{}
 	}

@@ -118,11 +118,40 @@ func TestLiveCollectionOfEveryGeometryType(t *testing.T) {
 			if rec.Code != 200 || !strings.Contains(rec.Body.String(), temporalTypeByName[g.typ].MFJSON) {
 				t.Fatalf("tgsequence reads %d without its token %s (%s)", rec.Code, temporalTypeByName[g.typ].MFJSON, rec.Body.String())
 			}
+			// A bbox over the world holds the feature of a type MobilityDB
+			// answers eIntersects over by a composition
+			rec = atsDo(t, mux, "GET", items+"?bbox=-180,-90,180,90", "")
+			if byComposition[g.typ] && (rec.Code != 200 || !strings.Contains(rec.Body.String(), `"numberReturned":1`)) {
+				t.Errorf("bbox over the world of a %s collection = %d, want its feature (%s)", g.typ, rec.Code,
+					rec.Body.String())
+			}
+			// and the EDR area query over the world, which its description
+			// links, as #TestLiveFeatureEDRQueries asks it of the fixture
+			area := "/collections/" + cid + "/area?coords=POLYGON((-179%20-89,179%20-89,179%2089,-179%2089,-179%20-89))"
+			rec = atsDo(t, mux, "GET", area, "")
+			if byComposition[g.typ] && (rec.Code != 200 || !strings.Contains(rec.Body.String(), `"numberReturned":1`)) {
+				t.Errorf("the area over the world of a %s collection = %d, want its feature (%s)", g.typ, rec.Code,
+					rec.Body.String())
+			}
 			rec = atsDo(t, mux, "GET", items+"/"+fid+"/tgsequence/1/velocity", "")
 			if want := map[bool]int{true: 200, false: 400}[typeHas(g.typ, "speed")]; rec.Code != want {
 				t.Errorf("velocity of a %s collection = %d, want %d (%s)", g.typ, rec.Code, want, rec.Body.String())
 			}
 		})
+	}
+}
+
+// The types over which MobilityDB answers eIntersects by a composition, the
+// relationship of the type its values cast to, state it in the generated table
+// as the types answering it by a C function do.
+var byComposition = map[string]bool{"tnpoint": true, "tpcpatch": true, "tpcpoint": true, "tpose": true,
+	"tquadbin": true}
+
+func TestEIntersectsByCompositionIsStated(t *testing.T) {
+	for typ := range byComposition {
+		if !typeHas(typ, "eIntersects") {
+			t.Errorf("the generated table states no eIntersects over %s, which MobilityDB declares as a composition", typ)
+		}
 	}
 }
 

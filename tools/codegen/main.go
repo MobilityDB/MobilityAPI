@@ -36,6 +36,7 @@ type catalog struct {
 	TemporalTypes map[string]temporalType `json:"temporalTypes"`
 	Functions     []function              `json:"functions"`
 	Aggregates    []sqlSignature          `json:"aggregates"`
+	Compositions  []sqlSignature          `json:"compositions"`
 	Structs       []cStruct               `json:"structs"`
 }
 
@@ -105,7 +106,7 @@ var featureFunctions = []string{
 // <type>FromMFJSON where it has one. Like #mathOperations it selects from the
 // catalog by the functions' own metadata alone, here their SQL signatures; a
 // signature carries its own sqlName where it differs from the function's sqlfn.
-func typeFunctions(fns []function, aggs []sqlSignature, types map[string]temporalType) map[string][]string {
+func typeFunctions(fns []function, aggs, comps []sqlSignature, types map[string]temporalType) map[string][]string {
 	wanted := map[string]bool{}
 	for _, n := range featureFunctions {
 		wanted[n] = true
@@ -153,6 +154,18 @@ func typeFunctions(fns []function, aggs []sqlSignature, types map[string]tempora
 		}
 		if t, ok := have[a.Args[0]]; ok && wanted[a.SQLName] {
 			t[a.SQLName] = true
+		}
+	}
+	// A composition (eIntersects(tnpoint, geometry), the relationship of the
+	// temporal point a tnpoint casts to) is a SQL function MobilityDB declares
+	// with no C symbol of its own, which the catalog states in its compositions
+	// registry by its SQL name and arguments, as an aggregate is stated.
+	for _, c := range comps {
+		if len(c.Args) == 0 {
+			continue
+		}
+		if t, ok := have[c.Args[0]]; ok && wanted[c.SQLName] {
+			t[c.SQLName] = true
 		}
 	}
 	out := map[string][]string{}
@@ -319,7 +332,7 @@ func main() {
 			"the function reading its text form", *path, rasterFamily))
 	}
 
-	src, err := render(c.TemporalTypes, typeFunctions(c.Functions, c.Aggregates, c.TemporalTypes), ops, raster)
+	src, err := render(c.TemporalTypes, typeFunctions(c.Functions, c.Aggregates, c.Compositions, c.TemporalTypes), ops, raster)
 	if err != nil {
 		fail(err)
 	}

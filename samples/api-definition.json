@@ -100,7 +100,7 @@
             "description": "OK"
           }
         },
-        "summary": "OGC API - EDR: the area query over a raster collection, coords a WKT POLYGON, answered in CoverageJSON",
+        "summary": "OGC API - EDR: the area query over a raster collection, coords a WKT POLYGON, answered in CoverageJSON; over a collection of moving features, the features it meets, answered in MF-JSON or GeoJSON",
         "x-conformance-class": "http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/core"
       }
     },
@@ -144,7 +144,7 @@
             "description": "OK"
           }
         },
-        "summary": "OGC API - EDR: the cube query over a raster collection, bbox minLon,minLat,maxLon,maxLat in CRS84 and z, answered in CoverageJSON",
+        "summary": "OGC API - EDR: the cube query over a raster collection, bbox minLon,minLat,maxLon,maxLat in CRS84 and z, answered in CoverageJSON; over a collection of moving features, the features it meets, answered in MF-JSON or GeoJSON",
         "x-conformance-class": "http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/core"
       }
     },
@@ -721,7 +721,7 @@
             "description": "OK"
           }
         },
-        "summary": "OGC API - EDR: the radius query over a raster collection, coords a WKT POINT, answered in CoverageJSON",
+        "summary": "OGC API - EDR: the radius query over a raster collection, coords a WKT POINT, answered in CoverageJSON; over a collection of moving features, the features it meets, answered in MF-JSON or GeoJSON",
         "x-conformance-class": "http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/core"
       }
     },
@@ -765,7 +765,7 @@
             "description": "OK"
           }
         },
-        "summary": "OGC API - EDR: the trajectory query over a raster collection, coords a WKT LINESTRING, answered in CoverageJSON",
+        "summary": "OGC API - EDR: the trajectory query over a raster collection, coords a WKT LINESTRING, answered in CoverageJSON; over a collection of moving features, the features it meets, answered in MF-JSON or GeoJSON",
         "x-conformance-class": "http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/core"
       }
     },

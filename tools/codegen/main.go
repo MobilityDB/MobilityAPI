@@ -95,9 +95,9 @@ type serialization struct {
 // the functions the tier's SQL calls.
 var featureFunctions = []string{
 	"appendInstant", "asBinary", "asMFJSON", "atTime", "cumulativeLength",
-	"deleteTime", "eIntersects", "extent", "getTime", "interp", "merge", "numInstants",
+	"deleteTime", "eDwithin", "eIntersects", "extent", "getTime", "interp", "merge", "numInstants",
 	"numSequences", "rasterTileValue", "rasterValue", "sequenceN", "setSRID",
-	"speed", "timeSpan", "trajectory", "transform", "tsample",
+	"speed", "tgeogpoint", "timeSpan", "trajectory", "transform", "tsample",
 }
 
 // typeFunctions answers, per temporal type, the featureFunctions MobilityDB

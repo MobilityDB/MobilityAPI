@@ -17,9 +17,12 @@
     "conformanceClass": "http://www.opengis.net/spec/ogcapi-movingfeatures-1/1.0/conf/mf-collection",
     "functions": [
       "bandPixelType",
+      "eDwithin",
+      "eIntersects",
       "extent",
       "numBands",
       "stbox",
+      "tgeogpoint",
       "transform"
     ]
   },
@@ -43,9 +46,12 @@
     "conformanceClass": "http://www.opengis.net/spec/ogcapi-movingfeatures-1/1.0/conf/mf-collection",
     "functions": [
       "bandPixelType",
+      "eDwithin",
+      "eIntersects",
       "extent",
       "numBands",
       "stbox",
+      "tgeogpoint",
       "transform"
     ]
   },
@@ -62,13 +68,19 @@
     "functions": [
       "SRID",
       "asCoverageJSON",
+      "asMFJSON",
+      "atTime",
       "clip",
+      "eDwithin",
+      "eIntersects",
       "extent",
       "rasterTileValue",
       "rasterUnion",
       "rasterValue",
       "stbox",
+      "tgeogpoint",
       "timeSpan",
+      "trajectory",
       "transform"
     ]
   },
@@ -120,13 +132,19 @@
     "functions": [
       "SRID",
       "asCoverageJSON",
+      "asMFJSON",
+      "atTime",
       "clip",
+      "eDwithin",
+      "eIntersects",
       "extent",
       "rasterTileValue",
       "rasterUnion",
       "rasterValue",
       "stbox",
+      "tgeogpoint",
       "timeSpan",
+      "trajectory",
       "transform"
     ]
   },
@@ -500,13 +518,19 @@
     "functions": [
       "SRID",
       "asCoverageJSON",
+      "asMFJSON",
+      "atTime",
       "clip",
+      "eDwithin",
+      "eIntersects",
       "extent",
       "rasterTileValue",
       "rasterUnion",
       "rasterValue",
       "stbox",
+      "tgeogpoint",
       "timeSpan",
+      "trajectory",
       "transform"
     ]
   },
@@ -546,13 +570,19 @@
     "functions": [
       "SRID",
       "asCoverageJSON",
+      "asMFJSON",
+      "atTime",
       "clip",
+      "eDwithin",
+      "eIntersects",
       "extent",
       "rasterTileValue",
       "rasterUnion",
       "rasterValue",
       "stbox",
+      "tgeogpoint",
       "timeSpan",
+      "trajectory",
       "transform"
     ]
   },

@@ -2,7 +2,81 @@
   "crs": [
     "http://www.opengis.net/def/crs/EPSG/0/25832"
   ],
+  "data_queries": {
+    "area": {
+      "link": {
+        "href": "/collections/conformance/area",
+        "rel": "data",
+        "type": "application/json",
+        "variables": {
+          "default_output_format": "MF-JSON",
+          "output_formats": [
+            "MF-JSON",
+            "GeoJSON"
+          ],
+          "query_type": "area"
+        }
+      }
+    },
+    "cube": {
+      "link": {
+        "href": "/collections/conformance/cube",
+        "rel": "data",
+        "type": "application/json",
+        "variables": {
+          "default_output_format": "MF-JSON",
+          "description": "The features are tested in two dimensions: z is read and not applied.",
+          "height_units": [
+            "m"
+          ],
+          "output_formats": [
+            "MF-JSON",
+            "GeoJSON"
+          ],
+          "query_type": "cube"
+        }
+      }
+    },
+    "radius": {
+      "link": {
+        "href": "/collections/conformance/radius",
+        "rel": "data",
+        "type": "application/json",
+        "variables": {
+          "default_output_format": "MF-JSON",
+          "output_formats": [
+            "MF-JSON",
+            "GeoJSON"
+          ],
+          "query_type": "radius",
+          "within_units": [
+            "km",
+            "m"
+          ]
+        }
+      }
+    },
+    "trajectory": {
+      "link": {
+        "href": "/collections/conformance/trajectory",
+        "rel": "data",
+        "type": "application/json",
+        "variables": {
+          "default_output_format": "MF-JSON",
+          "output_formats": [
+            "MF-JSON",
+            "GeoJSON"
+          ],
+          "query_type": "trajectory"
+        }
+      }
+    }
+  },
   "description": "A fixed two-feature corpus for the OGC API - Moving Features Part 1 abstract tests",
+  "distanceunits": [
+    "km",
+    "m"
+  ],
   "extent": {
     "spatial": {
       "bbox": [
@@ -27,21 +101,56 @@
   },
   "id": "conformance",
   "itemType": "movingfeature",
+  "keywords": [
+    "movingfeature",
+    "tgeompoint"
+  ],
   "links": [
     {
       "href": "/collections/conformance",
-      "rel": "self"
+      "rel": "self",
+      "type": "application/json"
     },
     {
       "href": "/collections/conformance/items",
-      "rel": "items"
+      "rel": "items",
+      "type": "application/json"
     },
     {
       "href": "/collections/conformance/export",
       "rel": "enclosure",
       "type": "application/x-ndjson"
+    },
+    {
+      "href": "/collections/conformance/area",
+      "rel": "data",
+      "title": "The area query",
+      "type": "application/json"
+    },
+    {
+      "href": "/collections/conformance/radius",
+      "rel": "data",
+      "title": "The radius query",
+      "type": "application/json"
+    },
+    {
+      "href": "/collections/conformance/cube",
+      "rel": "data",
+      "title": "The cube query",
+      "type": "application/json"
+    },
+    {
+      "href": "/collections/conformance/trajectory",
+      "rel": "data",
+      "title": "The trajectory query",
+      "type": "application/json"
     }
   ],
+  "output_formats": [
+    "MF-JSON",
+    "GeoJSON"
+  ],
+  "parameter_names": {},
   "temporalGeometryType": "tgeompoint",
   "title": "conformance"
 }

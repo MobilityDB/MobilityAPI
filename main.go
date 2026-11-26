@@ -261,10 +261,10 @@ func routeTable() []route {
 		{"GET", "/collections/{cid}/items/{fid}/tgsequence/queries/{qid}/stream", streamQuery, extension},
 		{"DELETE", "/collections/{cid}/items/{fid}/tgsequence/queries/{qid}", deleteQuery, extension},
 	}
-	// OGC API - EDR: the queries of a raster collection, its instances, one per
-	// period, and the queries of each instance.
+	// OGC API - EDR: the queries of a collection (#edrCollectionQuery), the
+	// instances of a raster collection, one per period, and the queries of each.
 	for _, q := range edrQueries {
-		rs = append(rs, route{"GET", "/collections/{cid}/" + q.name, edrQuery(q.name), edrConformance})
+		rs = append(rs, route{"GET", "/collections/{cid}/" + q.name, edrCollectionQuery(q.name), edrConformance})
 	}
 	rs = append(rs, route{"GET", "/collections/{cid}/instances", listInstances, edrConformance},
 		route{"GET", "/collections/{cid}/instances/{iid}", getInstance, edrConformance})
@@ -401,7 +401,8 @@ func conformsTo() []string {
 	classes := append([]string{
 		confMFCommon, confMFCollection, confMovingFeatures, confCQuery, confCommonCore, confCommonLanding,
 		confCommonCollections,
-	}, append(coverageConformance, edrConformance, edrCovJSONConformance)...)
+	}, append(coverageConformance, edrConformance, edrCollectionsConformance, edrQueriesConformance,
+		edrCovJSONConformance)...)
 	var out []string
 	for _, c := range classes {
 		out = append(out, c)
@@ -412,89 +413,116 @@ func conformsTo() []string {
 	return out
 }
 func listCollections(w http.ResponseWriter, r *http.Request) {
-	rows, err := db.Query(r.Context(), `SELECT id, title, description, item_type, crs FROM collections ORDER BY id`)
+	rows, err := db.Query(r.Context(), `SELECT id, item_type FROM collections ORDER BY id`)
 	if err != nil {
 		httpErr(w, 500, err.Error())
 		return
 	}
 	defer rows.Close()
-	cols := []map[string]any{}
+	type entry struct {
+		id     string
+		raster bool
+	}
+	var entries []entry
 	for rows.Next() {
 		var id string
-		var title, desc, itemType *string
-		var crs int
-		if err := rows.Scan(&id, &title, &desc, &itemType, &crs); err != nil {
+		var itemType *string
+		if err := rows.Scan(&id, &itemType); err != nil {
 			httpErr(w, 500, err.Error())
 			return
 		}
-		links := []map[string]string{
-			{"rel": "self", "href": "/collections/" + id},
-			{"rel": "items", "href": "/collections/" + id + "/items"},
-			{"rel": "enclosure", "href": "/collections/" + id + "/export", "type": "application/x-ndjson"},
-		}
-		cols = append(cols, map[string]any{
-			"id": id, "title": title, "description": desc, "itemType": itemType,
-			"crs":   []string{"http://www.opengis.net/def/crs/EPSG/0/" + itoa(crs)},
-			"links": links,
-		})
+		entries = append(entries, entry{id, itemType != nil && *itemType == coverageItems})
 	}
 	rows.Close()
-	// A raster collection is listed with the description #coverageDescription
-	// answers for /collections/{cid}, read once the registry's rows are closed.
-	for i, c := range cols {
-		if it, _ := c["itemType"].(*string); it == nil || *it != coverageItems {
-			continue
+	// Each collection is listed with the description /collections/{cid} answers,
+	// #coverageDescription's or #featureCollectionDescription's, read once the
+	// registry's rows are closed.
+	cols := []map[string]any{}
+	for _, e := range entries {
+		var col map[string]any
+		var err error
+		if src, ok := coverageMeta(r.Context(), e.id); e.raster && ok {
+			col, err = coverageDescription(r.Context(), e.id, src, nil)
+		} else {
+			col, err = featureCollectionDescription(r.Context(), e.id)
 		}
-		id := c["id"].(string)
-		src, ok := coverageMeta(r.Context(), id)
-		if !ok {
-			continue
-		}
-		col, err := coverageDescription(r.Context(), id, src, nil)
 		if err != nil {
 			httpErr(w, errStatus(err, 500), err.Error())
 			return
 		}
-		cols[i] = col
+		cols = append(cols, col)
 	}
 	writeJSON(w, 200, map[string]any{
 		"collections": cols,
-		"links":       []map[string]string{{"rel": "self", "href": "/collections"}},
+		"links":       []map[string]string{{"rel": "self", "href": "/collections", "type": "application/json"}},
 	})
 }
 
 // getCollection writes the description of one collection, as #listCollections
 // writes them all: a raster collection's through coverageCollection, a
-// collection of moving features's here.
+// collection of moving features's by #featureCollectionDescription.
 func getCollection(w http.ResponseWriter, r *http.Request) {
 	cid := r.PathValue("cid")
 	if src, ok := coverageMeta(r.Context(), cid); ok {
 		coverageCollection(w, r, cid, src)
 		return
 	}
-	tbl, srid, ok := collectionMeta(r.Context(), cid)
-	if !ok {
-		httpErr(w, 404, "collection not found")
+	col, err := featureCollectionDescription(r.Context(), cid)
+	if err != nil {
+		httpErr(w, errStatus(err, 500), err.Error())
 		return
 	}
-	var title, desc, itemType string
-	if err := db.QueryRow(r.Context(), `SELECT title,description,item_type FROM collections WHERE id=$1`, cid).
+	writeJSON(w, 200, col)
+}
+
+// featureCollectionDescription answers the description of a collection of
+// moving features, which /collections and /collections/{cid} both write. Beside
+// what OGC API - Moving Features states of a collection, it is the description
+// /req/edr/rc-collection-info requires of every collection: keywords, a type on
+// every link and a data link per EDR query the collection answers, its
+// data_queries (#edrFeatureDataQueries), output_formats, parameter_names, which
+// is empty as the collection answers features and no parameter value, and the
+// distanceunits of its radius.
+func featureCollectionDescription(ctx context.Context, cid string) (map[string]any, error) {
+	tbl, srid, ok := collectionMeta(ctx, cid)
+	if !ok {
+		return nil, statusErr{404, "collection not found"}
+	}
+	var title, desc, itemType *string
+	if err := db.QueryRow(ctx, `SELECT title,description,item_type FROM collections WHERE id=$1`, cid).
 		Scan(&title, &desc, &itemType); err != nil {
-		httpErr(w, 404, "collection not found")
-		return
+		return nil, statusErr{404, "collection not found"}
 	}
 	crsURI := "http://www.opengis.net/def/crs/EPSG/0/" + itoa(srid)
 	// The one system the Core admits for a collection's spatial extent.
 	const crs84URI = "http://www.opengis.net/def/crs/OGC/1.3/CRS84"
-	typ := collectionType(r.Context(), cid)
+	typ := collectionType(ctx, cid)
+	links := []map[string]string{
+		{"rel": "self", "href": "/collections/" + cid, "type": "application/json"},
+		{"rel": "items", "href": "/collections/" + cid + "/items", "type": "application/json"},
+		{"rel": "enclosure", "href": "/collections/" + cid + "/export", "type": "application/x-ndjson"},
+	}
+	queries := edrFeatureDataQueries(cid, typ)
+	for _, q := range edrFeatureQueries {
+		if _, ok := queries[q.name]; ok {
+			links = append(links, map[string]string{"rel": "data", "href": "/collections/" + cid + "/" + q.name,
+				"type": "application/json", "title": "The " + q.name + " query"})
+		}
+	}
+	keywords := []string{typ}
+	if itemType != nil && *itemType != "" {
+		keywords = []string{*itemType, typ}
+	}
 	col := map[string]any{
 		"id": cid, "title": title, "description": desc, "itemType": itemType,
-		"crs": []string{crsURI}, "temporalGeometryType": typ,
-		"links": []map[string]string{
-			{"rel": "self", "href": "/collections/" + cid},
-			{"rel": "items", "href": "/collections/" + cid + "/items"},
-			{"rel": "enclosure", "href": "/collections/" + cid + "/export", "type": "application/x-ndjson"},
-		},
+		"crs": []string{crsURI}, "temporalGeometryType": typ, "keywords": keywords,
+		"links":           links,
+		"data_queries":    queries,
+		"output_formats":  edrFeatureFormats,
+		"parameter_names": map[string]any{},
+	}
+	if _, ok := queries["radius"]; ok {
+		col["distanceunits"] = edrDistanceUnits
 	}
 	// extent: spatial bbox and temporal interval from the collection's STBOX.
 	//
@@ -518,7 +546,7 @@ func getCollection(w http.ResponseWriter, r *http.Request) {
 	if srid != 0 {
 		var xmin, ymin, xmax, ymax *float64
 		var tmin, tmax *string
-		if err := db.QueryRow(r.Context(), "SELECT Xmin(e),Ymin(e),Xmax(e),Ymax(e),CAST(Tmin(e) AS text),CAST(Tmax(e) AS text) "+
+		if err := db.QueryRow(ctx, "SELECT Xmin(e),Ymin(e),Xmax(e),Ymax(e),CAST(Tmin(e) AS text),CAST(Tmax(e) AS text) "+
 			"FROM (SELECT "+box+" e FROM "+ident(tbl)+") s").Scan(&xmin, &ymin, &xmax, &ymax, &tmin, &tmax); err == nil &&
 			xmin != nil && tmin != nil {
 			col["extent"] = map[string]any{
@@ -527,7 +555,7 @@ func getCollection(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	writeJSON(w, 200, col)
+	return col, nil
 }
 
 // epsgURI matches the EPSG code in an OGC CRS URI (.../def/crs/EPSG/0/<code>).

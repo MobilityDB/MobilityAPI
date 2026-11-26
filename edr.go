@@ -32,11 +32,18 @@ import (
 // CoverageJSON application/prs.coverage+json: an answer is written in that
 // spelling where the client names it, and otherwise as
 // application/vnd.cov+json, the type OGC CoverageJSON (OGC 21-069r2) defines
-// (#edrMedia). The class queries of 1.1 holds eight queries, each one a server
-// MAY answer, and the tier answers six.
+// (#edrMedia). The class collections binds the description of every collection
+// /collections lists (/req/edr/rc-collection-info), a raster collection's
+// (#coverageDescription) and a collection of moving features's
+// (#featureCollectionDescription) alike, each linking a query it answers. The
+// class queries, which inherits collections, holds eight queries, each one a
+// server MAY answer: a raster collection answers six (#edrQueries), a
+// collection of moving features four (#edrFeatureQueries).
 const (
-	edrConformance        = "http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/core"
-	edrCovJSONConformance = "http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/covjson"
+	edrConformance            = "http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/core"
+	edrCollectionsConformance = "http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/collections"
+	edrQueriesConformance     = "http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/queries"
+	edrCovJSONConformance     = "http://www.opengis.net/spec/ogcapi-edr-1/1.1/conf/covjson"
 )
 
 // The queries a raster collection answers, with the WKT geometry each reads
@@ -362,9 +369,15 @@ func edrPaths() map[string]any {
 		if q.geometry == "" {
 			reads = "bbox minLon,minLat,maxLon,maxLat in CRS84 and z"
 		}
-		out["/collections/{cid}/"+q.name] = map[string]any{"get": map[string]any{"summary": fmt.Sprintf(
-			"OGC API - EDR: the %s query over a raster collection, %s, answered in CoverageJSON",
-			q.name, reads),
+		summary := fmt.Sprintf("OGC API - EDR: the %s query over a raster collection, %s, answered in "+
+			"CoverageJSON", q.name, reads)
+		for _, f := range edrFeatureQueries {
+			if f.name == q.name {
+				summary += "; over a collection of moving features, the features it meets, answered in " +
+					strings.Join(edrFeatureFormats, " or ")
+			}
+		}
+		out["/collections/{cid}/"+q.name] = map[string]any{"get": map[string]any{"summary": summary,
 			// Every operation of an OpenAPI 3.0 document states its responses, as
 			// the operations #apiDoc writes do.
 			"responses": map[string]any{"200": map[string]any{"description": "OK"}}}}

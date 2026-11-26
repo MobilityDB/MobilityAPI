@@ -31,6 +31,12 @@ func routeServes(s surfaceRoute) (temporal, raster bool) {
 	if s.Path == "/collections" || s.Path == "/collections/{cid}" {
 		return true, true
 	}
+	// The EDR queries a collection of moving features answers as well
+	for _, q := range edrFeatureQueries {
+		if s.Path == "/collections/{cid}/"+q.name {
+			return true, true
+		}
+	}
 	if strings.HasPrefix(s.Class, coverageConfBase) || s.Class == edrConformance {
 		return false, true
 	}

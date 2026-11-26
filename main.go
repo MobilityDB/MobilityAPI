@@ -775,8 +775,13 @@ func itemFilters(tbl, typ string, srid int, q map[string][]string) (where string
 		}
 		n := len(args)
 		env := "ST_MakeEnvelope($" + itoa(n+1) + ",$" + itoa(n+2) + ",$" + itoa(n+3) + ",$" + itoa(n+4) + ",$" + itoa(n+5) + ")"
-		add("trip && stbox("+env+") AND eintersects(trip, "+env+")",
-			f[0], f[1], f[2], f[3], srid)
+		// The box test on the index applies where the type's box is an stbox; a
+		// type boxed otherwise (a point cloud's tpcbox) is tested exactly alone
+		test := "eintersects(trip, " + env + ")"
+		if t := temporalTypeByName[typ]; t == nil || t.Box == "stbox" {
+			test = "trip && stbox(" + env + ") AND " + test
+		}
+		add(test, f[0], f[1], f[2], f[3], srid)
 	}
 	// OGC uses lowercase "subtrajectory"; accept the camelCase form too.
 	sub := first(q, "subtrajectory")

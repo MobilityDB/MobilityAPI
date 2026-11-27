@@ -122,7 +122,8 @@ func TestLiveGeometryWindowAggregates(t *testing.T) {
 
 // Lines and polygons measure what they cover during the window, each overlap
 // counted once: two overlapping 2 x 2 squares cover 7, two lines 0-2 and 1-3
-// cover 3.
+// cover 3. Their space-time volume is the integral of their area over the
+// window's time, in seconds.
 func TestLiveGeometryWindowShapes(t *testing.T) {
 	// withMux runs f against a live mux, released when f returns, so that
 	// #geometryWindowEvents opens its own in between
@@ -161,6 +162,10 @@ func TestLiveGeometryWindowShapes(t *testing.T) {
 	}{
 		{"geo_win_polys", "AREA", 7},
 		{"geo_win_lines", "LENGTH", 3},
+		// The first square is held for the 600 seconds up to the second, which
+		// holds no time: 4 x 600 square units times seconds
+		{"geo_win_polys", "VOLUME", 2400},
+		{"geo_win_lines", "VOLUME", 0},
 	} {
 		evs := geometryWindowEvents(t, "/collections/"+c.cid+"/items/1/tgsequence/queries",
 			`{"aggregation":"`+c.agg+`","window":{"type":"COUNT","size":2},"intervalMs":20}`, 1)
@@ -174,8 +179,8 @@ func TestLiveGeometryWindowShapes(t *testing.T) {
 		for _, c := range []struct{ path, body, says string }{
 			{"/collections/conformance/items/1/tgsequence/queries",
 				`{"aggregation":"AREA","window":{"type":"COUNT","size":2}}`, "not defined"},
-			{"/collections/geo_win_polys/items/1/tgsequence/queries",
-				`{"aggregation":"VOLUME","window":{"type":"COUNT","size":2}}`, "space-time volume"},
+			{"/collections/conformance/items/1/tgsequence/queries",
+				`{"aggregation":"VOLUME","window":{"type":"COUNT","size":2}}`, "no area"},
 			{"/collections/conformance/items/1/tgsequence/queries",
 				`{"aggregation":"INTERSECT","window":{"type":"COUNT","size":2}}`, "needs a region"},
 			{"/collections/conformance/items/1/tgsequence/queries",

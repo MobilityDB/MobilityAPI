@@ -10,6 +10,7 @@ package main
 
 /*
 #cgo pkg-config: meos
+#include <float.h>
 #include <stdlib.h>
 #include <meos.h>
 #include <meos_geo.h>
@@ -155,6 +156,27 @@ func traversed(typ string, t *C.Temporal) *C.GSERIALIZED {
 	return C.tgeo_traversed_area(t, true)
 }
 
+// spaceTimeVolume answers the space-time volume of a value of lines or
+// polygons, the integral of its area over its time, in its square units times
+// seconds: MEOS answers it in microseconds, as the integral of a temporal
+// number, and the windows of a query are stated in seconds. A geography is
+// measured on the spheroid. Its dispatch per type mirrors #traversed.
+func spaceTimeVolume(typ string, t *C.Temporal) (float64, error) {
+	var v C.double
+	switch typ {
+	case "trgeometry":
+		v = C.trgeometry_space_time_volume(t)
+	case "tcbuffer":
+		v = C.tcbuffer_space_time_volume(t)
+	default:
+		v = C.tgeo_space_time_volume(t, true)
+	}
+	if v == C.DBL_MAX {
+		return 0, fmt.Errorf("the window's space-time volume cannot be computed: MEOS refuses a value with Z")
+	}
+	return float64(v) / 1e6, nil
+}
+
 // geometryValue computes the aggregation of one window, sub being the value
 // restricted to it.
 func geometryValue(spec QuerySpec, q *geometryQuery, sub *C.Temporal) (any, error) {
@@ -185,6 +207,8 @@ func geometryValue(spec QuerySpec, q *geometryQuery, sub *C.Temporal) (any, erro
 		}
 		defer C.free(unsafe.Pointer(g))
 		return float64(C.geo_area(g, false)), nil
+	case "VOLUME":
+		return spaceTimeVolume(spec.GeoType, sub)
 	case "TO_TRAJ":
 		path := C.tpoint_trajectory(sub, false)
 		if path == nil {

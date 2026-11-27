@@ -1,14 +1,16 @@
-# OGC API – Moving Features – Part 4 (Stream Extension) — requirements
+# The Stream proposal for OGC API – Moving Features — requirements
 
-The requirements of the **Continuous Query** class of OGC API – Moving Features –
-Part 4, `http://www.opengis.net/spec/ogcapi-movingfeatures-4/1.0/conf/cquery`,
-keyed by the number and identifier of the draft this service implements, each with
-the code that meets it and the test that reads it. `ats_part4_test.go` holds the
-suite to this table.
+The requirements of the **Continuous Query** of the Stream proposal for OGC API –
+Moving Features (titled "Part 4: Stream Extension"), keyed by the number and
+identifier the proposal gives them, each with the code that meets it and the test
+that reads it. `ats_part4_test.go` holds the suite to this table. OGC holds no
+draft of a Stream part, so the service claims no conformance class for it: the
+continuous queries are MobilityAPI extensions, which the API definition marks
+`x-mobilityapi-extension`.
 
-What the service declares and answers under Part 4 and every other standard it
-implements is stated by the specification [MobilityAPI and the OGC API
-Standards](https://github.com/MobilityDB/MobilityDB/blob/master/doc/specs/mobilityapi-ogc-api.md).
+What the service declares and answers under every standard it implements, and
+the extensions it serves, is stated by the specification [MobilityAPI and the OGC
+API Standards](https://github.com/MobilityDB/MobilityDB/blob/master/doc/specs/mobilityapi-ogc-api.md).
 
 ## Requirements
 

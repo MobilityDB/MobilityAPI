@@ -1,16 +1,12 @@
-// The requirements of the class cquery of OGC API – Moving Features – Part 4
-// (Stream Extension), as executable rows beside the abstract tests of Part 1.
+// The requirements of the Continuous Query of the Stream proposal for OGC API –
+// Moving Features (titled "Part 4: Stream Extension"), as executable rows beside
+// the abstract tests of Part 1.
 //
-// Part 4 is an unpublished OGC draft that no public repository of OGC holds, and
-// what it states no abstract test of; its requirements are the rows, each keyed
-// by the identifier the draft gives it and read from CONFORMANCE.md, which
-// records them from the draft MobilityAPI implements. A row names the test that
+// OGC holds no draft of a Stream part, so the proposal states no abstract test
+// and the service claims no class for it: the continuous queries are MobilityAPI
+// extensions. The rows are the proposal's requirements, each keyed by the
+// identifier it gives and read from CONFORMANCE.md; a row names the test that
 // reads the answer it states, as #atsDischargedBy does for Part 1.
-//
-// ⛔ THE ROWS FOLLOW THE DRAFT MOBILITYAPI READ. The public summary of a newer
-// draft, the FOSS4G workshop of the Moving Features SWG in opengeospatial/mf-swg,
-// describes a Continuous Query resource with id, pubtime, target, filter and
-// queryResult; once that draft is at hand, these rows and CONFORMANCE.md follow it.
 package main
 
 import (
@@ -18,17 +14,18 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
 )
 
-// atsPart4Req is one requirement of the class cquery.
+// atsPart4Req is one requirement of the Continuous Query of the Stream proposal.
 type atsPart4Req struct {
 	id           string // the draft's identifier, as CONFORMANCE.md writes it
 	number       int    // the draft's requirement number
 	dischargedBy string // the test that reads the answer it states
 }
 
-// atsPart4 is the class cquery, its requirements in the draft's order.
+// atsPart4 is the Continuous Query of the proposal, its requirements in its order.
 var atsPart4 = []atsPart4Req{
 	{"cquery_link", 1, "TestCqueryLinkShape"},
 	{"window", 2, "TestMeosWindowBounds"},
@@ -53,7 +50,7 @@ func TestATSPart4RowsAreTheRecordedRequirements(t *testing.T) {
 		t.Fatal("CONFORMANCE.md records no requirement row the pattern reads, so this test would assert nothing")
 	}
 	if len(recorded) != len(atsPart4) {
-		t.Errorf("CONFORMANCE.md records %d requirements of cquery, the rows hold %d", len(recorded), len(atsPart4))
+		t.Errorf("CONFORMANCE.md records %d requirements of the proposal, the rows hold %d", len(recorded), len(atsPart4))
 	}
 	for i, m := range recorded {
 		if i >= len(atsPart4) {
@@ -93,9 +90,20 @@ func TestATSPart4RowsAreDischarged(t *testing.T) {
 	}
 }
 
-// The class the rows belong to is one the service declares.
-func TestATSPart4ClassIsDeclared(t *testing.T) {
-	if !declaredClasses(t)[confCQuery] {
-		t.Errorf("the conformance declaration does not list %s, whose requirements these rows are", confCQuery)
+// The rows are requirements of a proposal and of no class: every route of a
+// continuous query is a MobilityAPI extension.
+func TestATSPart4RoutesAreExtensions(t *testing.T) {
+	n := 0
+	for _, r := range routeTable() {
+		if !strings.Contains(r.path, "/queries") {
+			continue
+		}
+		n++
+		if r.class != extension {
+			t.Errorf("%s %s is marked %s, a class of no OGC draft", r.method, r.path, r.class)
+		}
+	}
+	if n == 0 {
+		t.Fatal("no route of a continuous query, so this test would assert nothing")
 	}
 }

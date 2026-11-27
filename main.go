@@ -180,7 +180,6 @@ const (
 	confMFCommon          = "http://www.opengis.net/spec/ogcapi-movingfeatures-1/1.0/conf/common"
 	confMFCollection      = "http://www.opengis.net/spec/ogcapi-movingfeatures-1/1.0/conf/mf-collection"
 	confMovingFeatures    = "http://www.opengis.net/spec/ogcapi-movingfeatures-1/1.0/conf/movingfeatures"
-	confCQuery            = "http://www.opengis.net/spec/ogcapi-movingfeatures-4/1.0/conf/cquery"
 	confCommonCore        = "http://www.opengis.net/spec/ogcapi-common-1/1.0/conf/core"
 	confCommonLanding     = "http://www.opengis.net/spec/ogcapi-common-1/1.0/conf/landing-page"
 	confCommonCollections = "https://www.opengis.net/spec/ogcapi-common-2/1.0/conf/collections"
@@ -244,20 +243,22 @@ func routeTable() []route {
 		{"POST", "/collections/{cid}/items/{fid}/tproperties/{pname}", postTPropertyValues, confMovingFeatures},
 		{"DELETE", "/collections/{cid}/items/{fid}/tproperties/{pname}", deleteTProperty, confMovingFeatures},
 		{"DELETE", "/collections/{cid}/items/{fid}/tproperties/{pname}/{tvid}", deleteTPropertyValue, confMovingFeatures},
-		// MF Part 4 (Stream Extension): continuous queries on a temporal property,
-		// their results delivered over Server-Sent Events.
-		{"POST", "/collections/{cid}/items/{fid}/tproperties/{pname}/queries", postQuery, confCQuery},
-		{"GET", "/collections/{cid}/items/{fid}/tproperties/{pname}/queries", listQueries, confCQuery},
-		{"GET", "/collections/{cid}/items/{fid}/tproperties/{pname}/queries/{qid}", getQuery, confCQuery},
-		{"GET", "/collections/{cid}/items/{fid}/tproperties/{pname}/queries/{qid}/stream", streamQuery, confCQuery},
+		// Continuous queries on a temporal property, their results delivered
+		// over Server-Sent Events: a MobilityAPI extension following the Stream
+		// proposal for Moving Features (CONFORMANCE.md), which OGC holds no
+		// draft of, so no class is claimed for them.
+		{"POST", "/collections/{cid}/items/{fid}/tproperties/{pname}/queries", postQuery, extension},
+		{"GET", "/collections/{cid}/items/{fid}/tproperties/{pname}/queries", listQueries, extension},
+		{"GET", "/collections/{cid}/items/{fid}/tproperties/{pname}/queries/{qid}", getQuery, extension},
+		{"GET", "/collections/{cid}/items/{fid}/tproperties/{pname}/queries/{qid}/stream", streamQuery, extension},
 		// The results of a continuous query over a WebSocket, beside the
-		// Server-Sent Events Part 4 binds
+		// Server-Sent Events
 		{"GET", "/collections/{cid}/items/{fid}/tproperties/{pname}/queries/{qid}/ws", websocketQuery, extension},
-		{"DELETE", "/collections/{cid}/items/{fid}/tproperties/{pname}/queries/{qid}", deleteQuery, confCQuery},
+		{"DELETE", "/collections/{cid}/items/{fid}/tproperties/{pname}/queries/{qid}", deleteQuery, extension},
 		// Live ingestion: a producer pushes records the live queries process.
 		{"POST", "/collections/{cid}/items/{fid}/tproperties/{pname}/ingest", ingestProperty, extension},
 		// A continuous query streaming the moving feature's position, the feed of
-		// an animated map, which no requirement of Part 4 states.
+		// an animated map, which no requirement of the Stream proposal states.
 		{"POST", "/collections/{cid}/items/{fid}/tgsequence/queries", postGeometryQuery, extension},
 		{"GET", "/collections/{cid}/items/{fid}/tgsequence/queries", listGeometryQueries, extension},
 		{"GET", "/collections/{cid}/items/{fid}/tgsequence/queries/{qid}", getQuery, extension},
@@ -403,7 +404,7 @@ func conformance(w http.ResponseWriter, r *http.Request) {
 // conformsTo answers the identifiers the conformance declaration lists.
 func conformsTo() []string {
 	classes := append([]string{
-		confMFCommon, confMFCollection, confMovingFeatures, confCQuery, confCommonCore, confCommonLanding,
+		confMFCommon, confMFCollection, confMovingFeatures, confCommonCore, confCommonLanding,
 		confCommonCollections,
 	}, append(coverageConformance, edrConformance, edrCollectionsConformance, edrQueriesConformance,
 		edrCovJSONConformance)...)
@@ -1691,7 +1692,7 @@ func apiDoc(w http.ResponseWriter, r *http.Request) {
 			},
 			"/collections/{cid}/items/{fid}/tproperties/{pname}/queries": map[string]any{
 				"get":  op("List the continuous queries on a temporal property"),
-				"post": op("Register a continuous query (MF Part 4): a lifted transform (operation), or a windowed aggregation (aggregation + window: COUNT | TUMBLING | HOPPING). Set live:true to source from pushed records, and topic to publish the results to that Kafka topic of MFAPI_KAFKA_BROKERS"),
+				"post": op("Register a continuous query (a MobilityAPI extension following the Stream proposal for Moving Features): a lifted transform (operation), or a windowed aggregation (aggregation + window: COUNT | TUMBLING | HOPPING). Set live:true to source from pushed records, and topic to publish the results to that Kafka topic of MFAPI_KAFKA_BROKERS"),
 			},
 			"/collections/{cid}/items/{fid}/tproperties/{pname}/queries/{qid}": map[string]any{
 				"get":    op("Continuous-query status (the cquery link object)"),

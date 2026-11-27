@@ -660,7 +660,7 @@
           }
         },
         "summary": "List the continuous queries on a temporal property",
-        "x-conformance-class": "http://www.opengis.net/spec/ogcapi-movingfeatures-4/1.0/conf/cquery"
+        "x-mobilityapi-extension": true
       },
       "post": {
         "responses": {
@@ -668,8 +668,8 @@
             "description": "OK"
           }
         },
-        "summary": "Register a continuous query (MF Part 4): a lifted transform (operation), or a windowed aggregation (aggregation + window: COUNT | TUMBLING | HOPPING). Set live:true to source from pushed records, and topic to publish the results to that Kafka topic of MFAPI_KAFKA_BROKERS",
-        "x-conformance-class": "http://www.opengis.net/spec/ogcapi-movingfeatures-4/1.0/conf/cquery"
+        "summary": "Register a continuous query (a MobilityAPI extension following the Stream proposal for Moving Features): a lifted transform (operation), or a windowed aggregation (aggregation + window: COUNT | TUMBLING | HOPPING). Set live:true to source from pushed records, and topic to publish the results to that Kafka topic of MFAPI_KAFKA_BROKERS",
+        "x-mobilityapi-extension": true
       }
     },
     "/collections/{cid}/items/{fid}/tproperties/{pname}/queries/{qid}": {
@@ -680,7 +680,7 @@
           }
         },
         "summary": "Stop a continuous query",
-        "x-conformance-class": "http://www.opengis.net/spec/ogcapi-movingfeatures-4/1.0/conf/cquery"
+        "x-mobilityapi-extension": true
       },
       "get": {
         "responses": {
@@ -689,7 +689,7 @@
           }
         },
         "summary": "Continuous-query status (the cquery link object)",
-        "x-conformance-class": "http://www.opengis.net/spec/ogcapi-movingfeatures-4/1.0/conf/cquery"
+        "x-mobilityapi-extension": true
       }
     },
     "/collections/{cid}/items/{fid}/tproperties/{pname}/queries/{qid}/stream": {
@@ -700,7 +700,7 @@
           }
         },
         "summary": "Continuous-query results as Server-Sent Events (see api/streaming-asyncapi.yaml)",
-        "x-conformance-class": "http://www.opengis.net/spec/ogcapi-movingfeatures-4/1.0/conf/cquery"
+        "x-mobilityapi-extension": true
       }
     },
     "/collections/{cid}/items/{fid}/tproperties/{pname}/queries/{qid}/ws": {

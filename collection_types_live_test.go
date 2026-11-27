@@ -171,8 +171,11 @@ func TestLiveCollectionTypeRefusals(t *testing.T) {
 	if rec := atsDo(t, mux, "POST", "/collections", `{"id":"`+cid+`","temporalGeometryType":"th3index","crs":4326}`); rec.Code != 201 {
 		t.Fatalf("POST /collections = %d (%s)", rec.Code, rec.Body.String())
 	}
+	// MobilityDB relates a cell to a geography alone, so a bbox over cells is a
+	// longitude and latitude box (#geographic), which eOverlaps decides and
+	// MobilityDB states no eOverlaps over a cell
 	rec = atsDo(t, mux, "GET", "/collections/"+cid+"/items?bbox=0,0,1,1", "")
-	if rec.Code != 400 || !strings.Contains(rec.Body.String(), "eIntersects") {
-		t.Errorf("bbox over a th3index collection = %d, want 400 naming eIntersects (%s)", rec.Code, rec.Body.String())
+	if rec.Code != 400 || !strings.Contains(rec.Body.String(), "eOverlaps") {
+		t.Errorf("bbox over a th3index collection = %d, want 400 naming eOverlaps (%s)", rec.Code, rec.Body.String())
 	}
 }

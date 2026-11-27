@@ -147,8 +147,12 @@ func edrFeatureQuery(w http.ResponseWriter, r *http.Request, query string) {
 	typ := collectionType(r.Context(), cid)
 	if !edrFeatureQueryAnswered(typ, query) {
 		reason := "MobilityDB states no eIntersects over it"
-		if query == "radius" {
+		switch {
+		case query == "radius":
 			reason = "MobilityDB states no distance in metres from it to a point"
+		case query == "cube" && geographic(typ):
+			// As /items refuses a bbox over the same collection
+			reason = "MobilityDB states no eOverlaps over it"
 		}
 		httpErr(w, 400, "the "+query+" query is not defined for a collection of "+typ+": "+reason)
 		return

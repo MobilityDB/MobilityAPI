@@ -250,6 +250,9 @@ func routeTable() []route {
 		{"GET", "/collections/{cid}/items/{fid}/tproperties/{pname}/queries", listQueries, confCQuery},
 		{"GET", "/collections/{cid}/items/{fid}/tproperties/{pname}/queries/{qid}", getQuery, confCQuery},
 		{"GET", "/collections/{cid}/items/{fid}/tproperties/{pname}/queries/{qid}/stream", streamQuery, confCQuery},
+		// The results of a continuous query over a WebSocket, beside the
+		// Server-Sent Events Part 4 binds
+		{"GET", "/collections/{cid}/items/{fid}/tproperties/{pname}/queries/{qid}/ws", websocketQuery, extension},
 		{"DELETE", "/collections/{cid}/items/{fid}/tproperties/{pname}/queries/{qid}", deleteQuery, confCQuery},
 		// Live ingestion: a producer pushes records the live queries process.
 		{"POST", "/collections/{cid}/items/{fid}/tproperties/{pname}/ingest", ingestProperty, extension},
@@ -259,6 +262,7 @@ func routeTable() []route {
 		{"GET", "/collections/{cid}/items/{fid}/tgsequence/queries", listGeometryQueries, extension},
 		{"GET", "/collections/{cid}/items/{fid}/tgsequence/queries/{qid}", getQuery, extension},
 		{"GET", "/collections/{cid}/items/{fid}/tgsequence/queries/{qid}/stream", streamQuery, extension},
+		{"GET", "/collections/{cid}/items/{fid}/tgsequence/queries/{qid}/ws", websocketQuery, extension},
 		{"DELETE", "/collections/{cid}/items/{fid}/tgsequence/queries/{qid}", deleteQuery, extension},
 	}
 	// OGC API - EDR: the queries of a collection (#edrCollectionQuery), the
@@ -1694,6 +1698,7 @@ func apiDoc(w http.ResponseWriter, r *http.Request) {
 				"delete": op("Stop a continuous query"),
 			},
 			"/collections/{cid}/items/{fid}/tproperties/{pname}/queries/{qid}/stream": get("Continuous-query results as Server-Sent Events (see api/streaming-asyncapi.yaml)"),
+			"/collections/{cid}/items/{fid}/tproperties/{pname}/queries/{qid}/ws":     get("Continuous-query results over a WebSocket, one JSON message each (see api/streaming-asyncapi.yaml)"),
 			"/collections/{cid}/items/{fid}/tproperties/{pname}/ingest":               map[string]any{"post": op("Push a live record ({datetime, value}) to the live queries on the property")},
 			"/collections/{cid}/items/{fid}/tgsequence/queries": map[string]any{
 				"get":  op("List the geometry (position) continuous queries of a feature"),
@@ -1704,6 +1709,7 @@ func apiDoc(w http.ResponseWriter, r *http.Request) {
 				"delete": op("Stop a geometry continuous query"),
 			},
 			"/collections/{cid}/items/{fid}/tgsequence/queries/{qid}/stream": get("Moving-feature positions, or a window aggregate of its temporal geometry, as Server-Sent Events (see api/streaming-asyncapi.yaml)"),
+			"/collections/{cid}/items/{fid}/tgsequence/queries/{qid}/ws":     get("Moving-feature positions, or a window aggregate of its temporal geometry, over a WebSocket (see api/streaming-asyncapi.yaml)"),
 			"/collections/{cid}/export":                                      get("Bulk lakehouse export: NDJSON, or ?format=parquet (WKB + bbox/time sidecar)"),
 			"/collections/{cid}/coverage":                                    get("OGC API - Coverages: the raster of one period of a raster collection, subset by bbox, datetime, subset and properties, as GeoTIFF or CoverageJSON"),
 			"/collections/{cid}/schema":                                      get("OGC API - Coverages: the fields of a raster collection, one per band"),

@@ -445,6 +445,8 @@ func cqueryLink(r *http.Request, cq *contQuery) map[string]any {
 	}
 	self := scheme + "://" + r.Host + cq.basePath() + "/" + cq.id
 	stream := self + "/stream"
+	// The WebSocket channel of #websocketQuery, under ws:// or wss://
+	ws := "ws" + strings.TrimPrefix(self, "http") + "/ws"
 	engName := cq.spec.Engine
 	if engName == "" {
 		if e, err := streamEngine(); err == nil {
@@ -463,6 +465,8 @@ func cqueryLink(r *http.Request, cq *contQuery) map[string]any {
 		"links": []map[string]string{
 			{"rel": "self", "href": self},
 			{"rel": "stream", "href": stream, "type": "text/event-stream"},
+			{"rel": "alternate", "href": ws, "type": "application/json",
+				"title": "the results over a WebSocket, one JSON message each"},
 		},
 	}
 }

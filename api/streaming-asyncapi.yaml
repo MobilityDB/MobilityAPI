@@ -13,6 +13,14 @@ servers:
     host: localhost:8088
     protocol: http
     description: The MobilityAPI tier.
+  tierWebSocket:
+    host: localhost:8088
+    protocol: ws
+    description: >-
+      The MobilityAPI tier, whose continuous queries also deliver their results
+      over a WebSocket, a MobilityAPI extension: each result is one text
+      message, the JSON object an SSE event carries, and the connection closes
+      with a normal closure when the query stops.
 
 channels:
   propertyResults:
@@ -45,6 +53,36 @@ channels:
       geometryWindowAggregate:
         $ref: '#/components/messages/geometryWindowAggregate'
 
+  propertyResultsWebSocket:
+    address: /collections/{cid}/items/{fid}/tproperties/{name}/queries/{queryId}/ws
+    description: The results of a property continuous query over a WebSocket.
+    servers:
+      - $ref: '#/servers/tierWebSocket'
+    parameters:
+      cid: { description: collection id }
+      fid: { description: feature id }
+      name: { description: temporal property name }
+      queryId: { description: registered query id }
+    messages:
+      transform:
+        $ref: '#/components/messages/transform'
+      windowAggregate:
+        $ref: '#/components/messages/windowAggregate'
+  geometryResultsWebSocket:
+    address: /collections/{cid}/items/{fid}/tgsequence/queries/{queryId}/ws
+    description: The results of a geometry continuous query over a WebSocket.
+    servers:
+      - $ref: '#/servers/tierWebSocket'
+    parameters:
+      cid: { description: collection id }
+      fid: { description: feature id }
+      queryId: { description: registered query id }
+    messages:
+      position:
+        $ref: '#/components/messages/position'
+      geometryWindowAggregate:
+        $ref: '#/components/messages/geometryWindowAggregate'
+
 operations:
   receivePropertyResults:
     action: receive
@@ -52,6 +90,12 @@ operations:
   receiveGeometryResults:
     action: receive
     channel: { $ref: '#/channels/geometryResults' }
+  receivePropertyResultsWebSocket:
+    action: receive
+    channel: { $ref: '#/channels/propertyResultsWebSocket' }
+  receiveGeometryResultsWebSocket:
+    action: receive
+    channel: { $ref: '#/channels/geometryResultsWebSocket' }
 
 components:
   messages:

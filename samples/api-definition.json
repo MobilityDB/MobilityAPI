@@ -492,6 +492,17 @@
         "x-mobilityapi-extension": true
       }
     },
+    "/collections/{cid}/items/{fid}/tgsequence/queries/{qid}/ws": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "summary": "Moving-feature positions, or a window aggregate of its temporal geometry, over a WebSocket (see api/streaming-asyncapi.yaml)",
+        "x-mobilityapi-extension": true
+      }
+    },
     "/collections/{cid}/items/{fid}/tgsequence/{tgid}": {
       "delete": {
         "responses": {
@@ -690,6 +701,17 @@
         },
         "summary": "Continuous-query results as Server-Sent Events (see api/streaming-asyncapi.yaml)",
         "x-conformance-class": "http://www.opengis.net/spec/ogcapi-movingfeatures-4/1.0/conf/cquery"
+      }
+    },
+    "/collections/{cid}/items/{fid}/tproperties/{pname}/queries/{qid}/ws": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "summary": "Continuous-query results over a WebSocket, one JSON message each (see api/streaming-asyncapi.yaml)",
+        "x-mobilityapi-extension": true
       }
     },
     "/collections/{cid}/items/{fid}/tproperties/{pname}/{tvid}": {

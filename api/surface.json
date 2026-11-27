@@ -389,6 +389,12 @@
     "functions": []
   },
   {
+    "method": "GET",
+    "path": "/collections/{cid}/items/{fid}/tgsequence/queries/{qid}/ws",
+    "extension": true,
+    "functions": []
+  },
+  {
     "method": "DELETE",
     "path": "/collections/{cid}/items/{fid}/tgsequence/{tgid}",
     "conformanceClass": "http://www.opengis.net/spec/ogcapi-movingfeatures-1/1.0/conf/movingfeatures",
@@ -488,6 +494,12 @@
     "method": "GET",
     "path": "/collections/{cid}/items/{fid}/tproperties/{pname}/queries/{qid}/stream",
     "conformanceClass": "http://www.opengis.net/spec/ogcapi-movingfeatures-4/1.0/conf/cquery",
+    "functions": []
+  },
+  {
+    "method": "GET",
+    "path": "/collections/{cid}/items/{fid}/tproperties/{pname}/queries/{qid}/ws",
+    "extension": true,
     "functions": []
   },
   {

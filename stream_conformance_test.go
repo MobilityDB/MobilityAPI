@@ -7,8 +7,10 @@ import (
 	"testing"
 )
 
-// The service declares the OGC MF Part 4 (Continuous Query) conformance class.
-func TestConformanceDeclaresPart4(t *testing.T) {
+// The service declares no conformance class for its continuous queries: they
+// follow the Stream proposal for Moving Features, which OGC holds no draft of,
+// and are MobilityAPI extensions.
+func TestConformanceDeclaresNoStreamClass(t *testing.T) {
 	rec := httptest.NewRecorder()
 	conformance(rec, httptest.NewRequest("GET", "/conformance", nil))
 	var body struct {
@@ -17,13 +19,14 @@ func TestConformanceDeclaresPart4(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
 	}
-	const want = "http://www.opengis.net/spec/ogcapi-movingfeatures-4/1.0/conf/cquery"
+	if len(body.ConformsTo) == 0 {
+		t.Fatal("the conformance declaration lists no class, so this test would assert nothing")
+	}
 	for _, c := range body.ConformsTo {
-		if c == want {
-			return
+		if strings.Contains(c, "ogcapi-movingfeatures-4") {
+			t.Errorf("the conformance declaration lists %s, a class of a Stream part OGC holds no draft of", c)
 		}
 	}
-	t.Errorf("conformance does not declare the MF Part 4 cquery class %q", want)
 }
 
 // The API definition documents the continuous-query paths.

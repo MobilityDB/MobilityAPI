@@ -3,8 +3,9 @@ info:
   title: MobilityAPI — MF Stream (Continuous Query)
   version: '1.0'
   description: >-
-    Server-Sent Events channels for OGC API – Moving Features – Part 4
-    continuous queries. A query is registered over HTTP (see the OpenAPI
+    The channels of the continuous queries of the Stream proposal for OGC API –
+    Moving Features, MobilityAPI extensions (OGC holds no draft of a Stream
+    part). A query is registered over HTTP (see the OpenAPI
     surface); its results are delivered on the SSE channel referenced by the
     cquery link object's `channel`.
 

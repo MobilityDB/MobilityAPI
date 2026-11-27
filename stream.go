@@ -1,5 +1,6 @@
-// Streaming tier: the engine-neutral control plane for OGC API – Moving
-// Features – Part 4 (Continuous Query / Stream Extension). It is the streaming
+// Streaming tier: the engine-neutral control plane for the continuous queries
+// of the Stream proposal for OGC API – Moving Features, MobilityAPI extensions
+// as OGC holds no draft of a Stream part (CONFORMANCE.md). It is the streaming
 // analogue of the request-response Backend seam: the control plane holds no
 // MEOS and no engine specifics — it defines a continuous query, hands it to a
 // StreamEngine, and delivers the engine's result instants over Server-Sent
@@ -67,7 +68,7 @@ type QuerySpec struct {
 	Topic string
 }
 
-// Window is a continuous-query window (OGC MF Part 4). COUNT groups a fixed
+// Window is a continuous-query window (the Stream proposal). COUNT groups a fixed
 // number of records; TUMBLING groups a fixed, non-overlapping time span;
 // HOPPING groups a fixed time span that advances by a shorter hop (overlapping).
 type Window struct {
@@ -88,7 +89,7 @@ type windowBody struct {
 }
 
 // parseWindow reads the window of a continuous query, a property's or a
-// geometry's alike, refusing one Part 4 does not define.
+// geometry's alike, refusing one the Stream proposal does not define.
 func parseWindow(b windowBody) (Window, error) {
 	wtype := strings.ToUpper(strings.TrimSpace(b.Type))
 	if wtype != "COUNT" && wtype != "TUMBLING" && wtype != "HOPPING" {
@@ -105,7 +106,7 @@ func parseWindow(b windowBody) (Window, error) {
 }
 
 // aggByType is the catalogue of window aggregations valid per property type
-// (OGC MF Part 4 Table 6). Numeric aggregations use MEOS scalar accessors over
+// (Table 6 of the Stream proposal). Numeric aggregations use MEOS scalar accessors over
 // the window's values; text and boolean aggregations reduce the MEOS value
 // arrays.
 var aggByType = map[string]map[string]bool{
@@ -724,7 +725,7 @@ func deleteQuery(w http.ResponseWriter, r *http.Request) {
 }
 
 // streamQuery delivers a continuous query's result instants as Server-Sent
-// Events — the broker-free channel binding Part 4 allows.
+// Events — the broker-free channel the Stream proposal allows.
 func streamQuery(w http.ResponseWriter, r *http.Request) {
 	cq := streamReg.get(r.PathValue("qid"))
 	if cq == nil {

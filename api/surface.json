@@ -467,13 +467,13 @@
   {
     "method": "GET",
     "path": "/collections/{cid}/items/{fid}/tproperties/{pname}/queries",
-    "conformanceClass": "http://www.opengis.net/spec/ogcapi-movingfeatures-4/1.0/conf/cquery",
+    "extension": true,
     "functions": []
   },
   {
     "method": "POST",
     "path": "/collections/{cid}/items/{fid}/tproperties/{pname}/queries",
-    "conformanceClass": "http://www.opengis.net/spec/ogcapi-movingfeatures-4/1.0/conf/cquery",
+    "extension": true,
     "functions": [
       "asMFJSON"
     ]
@@ -481,19 +481,19 @@
   {
     "method": "DELETE",
     "path": "/collections/{cid}/items/{fid}/tproperties/{pname}/queries/{qid}",
-    "conformanceClass": "http://www.opengis.net/spec/ogcapi-movingfeatures-4/1.0/conf/cquery",
+    "extension": true,
     "functions": []
   },
   {
     "method": "GET",
     "path": "/collections/{cid}/items/{fid}/tproperties/{pname}/queries/{qid}",
-    "conformanceClass": "http://www.opengis.net/spec/ogcapi-movingfeatures-4/1.0/conf/cquery",
+    "extension": true,
     "functions": []
   },
   {
     "method": "GET",
     "path": "/collections/{cid}/items/{fid}/tproperties/{pname}/queries/{qid}/stream",
-    "conformanceClass": "http://www.opengis.net/spec/ogcapi-movingfeatures-4/1.0/conf/cquery",
+    "extension": true,
     "functions": []
   },
   {

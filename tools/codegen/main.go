@@ -178,6 +178,50 @@ func typeFunctions(fns []function, aggs, comps []sqlSignature, types map[string]
 	return out
 }
 
+// relationRegions answers, per temporal type, the static spatial types,
+// geometry and geography, that MobilityDB relates its values to by
+// eIntersects(type, x), sorted: the types a query's region over a collection of
+// that type can be read as. It is a fact of the signatures and not of the
+// type's base: the values of a temporal H3 or S2 cell are cells, which
+// MobilityDB relates to a geography alone, those of a temporal quadbin to a
+// geometry alone, and those of a pose chain to both. It reads the same SQL
+// signatures and compositions as #typeFunctions.
+func relationRegions(fns []function, comps []sqlSignature, types map[string]temporalType) map[string][]string {
+	have := map[string]map[string]bool{}
+	note := func(name string, args []string) {
+		if name != "eIntersects" || len(args) != 2 {
+			return
+		}
+		if _, ok := types[args[0]]; !ok || (args[1] != "geometry" && args[1] != "geography") {
+			return
+		}
+		if have[args[0]] == nil {
+			have[args[0]] = map[string]bool{}
+		}
+		have[args[0]][args[1]] = true
+	}
+	for _, f := range fns {
+		for _, sig := range f.SQLSignatures {
+			name := sig.SQLName
+			if name == "" {
+				name = f.SQLName
+			}
+			note(name, sig.Args)
+		}
+	}
+	for _, c := range comps {
+		note(c.SQLName, c.Args)
+	}
+	out := map[string][]string{}
+	for t, rs := range have {
+		for r := range rs {
+			out[t] = append(out[t], r)
+		}
+		sort.Strings(out[t])
+	}
+	return out
+}
+
 // rasterFamily is the MEOS family whose types a raster collection holds.
 const rasterFamily = "RASTER"
 
@@ -332,7 +376,9 @@ func main() {
 			"the function reading its text form", *path, rasterFamily))
 	}
 
-	src, err := render(c.TemporalTypes, typeFunctions(c.Functions, c.Aggregates, c.Compositions, c.TemporalTypes), ops, raster)
+	regions := relationRegions(c.Functions, c.Compositions, c.TemporalTypes)
+	src, err := render(c.TemporalTypes, typeFunctions(c.Functions, c.Aggregates, c.Compositions, c.TemporalTypes),
+		regions, ops, raster)
 	if err != nil {
 		fail(err)
 	}
@@ -527,7 +573,7 @@ func callMathOp(sqlName string, temp *C.Temporal, arg float64) (*C.Temporal, boo
 // render writes catalog_gen.go, the tables the tier reads, as #renderDispatch
 // writes the cgo dispatch: the temporal types with their functions, the boxes,
 // the math operations, and the raster types with their functions.
-func render(types map[string]temporalType, funcs map[string][]string, ops []mathOperation,
+func render(types map[string]temporalType, funcs map[string][]string, regions map[string][]string, ops []mathOperation,
 	raster map[string][]string) ([]byte, error) {
 	names := make([]string, 0, len(types))
 	for name := range types {
@@ -555,6 +601,9 @@ package main
 // says a type has no MF-JSON form. Funcs are the SQL functions the tier applies
 // to a feature's temporal geometry that MobilityDB declares over the type, and
 // its MF-JSON reader <type>FromMFJSON, read from the catalog's SQL signatures.
+// Regions are the static spatial types, geometry and geography, that
+// MobilityDB relates the type's values to by eIntersects, none where it states
+// no such relationship.
 type TemporalType struct {
 	Name    string
 	Base    string
@@ -563,6 +612,7 @@ type TemporalType struct {
 	Spatial bool
 	Number  bool
 	Linear  bool
+	Regions []string
 	Funcs   []string
 }
 
@@ -571,8 +621,8 @@ var temporalTypes = []TemporalType{
 `)
 	for _, name := range names {
 		t := types[name]
-		fmt.Fprintf(&b, "\t{Name: %q, Base: %q, Box: %q, MFJSON: %q, Spatial: %t, Number: %t, Linear: %t, Funcs: %#v},\n",
-			name, t.Base, t.Box, t.MFJSON, t.Spatial, t.Number, t.Linear, funcs[name])
+		fmt.Fprintf(&b, "\t{Name: %q, Base: %q, Box: %q, MFJSON: %q, Spatial: %t, Number: %t, Linear: %t, Regions: %#v, Funcs: %#v},\n",
+			name, t.Base, t.Box, t.MFJSON, t.Spatial, t.Number, t.Linear, regions[name], funcs[name])
 	}
 	boxes := map[string]bool{}
 	for _, t := range types {

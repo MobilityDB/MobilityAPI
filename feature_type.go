@@ -152,11 +152,17 @@ func staticGeometry(typ, expr string) string {
 }
 
 // geographic reports whether the values of the temporal type typ are
-// geographies, which MobilityDB relates on the spheroid and refuses to relate
-// to a planar geometry.
+// geographies, or are related by MobilityDB to a geography alone (a temporal H3
+// or S2 cell), which MobilityDB relates on the spheroid and refuses to relate
+// to a planar geometry. It decides by what the generated table states of the
+// type, as #typeHas and #edrGeodetic do: its base, and the regions of its
+// eIntersects signatures (TemporalType.Regions).
 func geographic(typ string) bool {
 	t := temporalTypeByName[typ]
-	return t != nil && t.Base == "geography"
+	if t == nil {
+		return false
+	}
+	return t.Base == "geography" || (len(t.Regions) == 1 && t.Regions[0] == "geography")
 }
 
 // lonLatBoxTest is the SQL that tests whether the temporal geometry expr of a

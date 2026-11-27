@@ -3,6 +3,11 @@
 // the same registry, lifecycle and SSE delivery as the property streams, but its
 // records carry coordinates instead of a scalar value, and it needs no engine
 // transform: the positions come straight from the stored trajectory.
+//
+// With an aggregation and a window, it is a MobilityAPI extension following the
+// Table 7 of the Stream proposal (no OGC class is claimed): the engine computes,
+// by MEOS, one value per window of the feature's temporal geometry
+// (#geometryAggregations).
 package main
 
 import (
@@ -10,9 +15,62 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"sort"
 	"strconv"
+	"strings"
 	"time"
 )
+
+// shapeTypes are the temporal types whose values are lines or polygons, whose
+// window LENGTH and AREA measure what the feature covers during the window,
+// the union of its values or the region its motion sweeps.
+var shapeTypes = map[string]bool{"tgeometry": true, "tgeography": true, "trgeometry": true, "tcbuffer": true}
+
+// geometryAggregations answers, per aggregation of Table 7, whether a
+// collection of the temporal type typ held in the system srid answers it: ""
+// when it does, the reason when it does not.
+//
+//   - COUNT, the instants of the window, for every type.
+//   - A moving point (MF-JSON's MovingPoint): LENGTH, the distance travelled,
+//     on the spheroid for a point in longitude and latitude; TO_TRAJ, the path
+//     of the window; INTERSECT, whether it ever meets the query's region.
+//   - A line or polygon (#shapeTypes): LENGTH and AREA of what the feature
+//     covers during the window, the union of its values or the region its
+//     motion sweeps, each overlap counted once; INTERSECT. MEOS unites them on
+//     the plane alone, so a collection in longitude and latitude has neither.
+//   - VOLUME, refused: MEOS states no function for the space-time volume of a
+//     moving polygon.
+func geometryAggregations(typ string, srid int) map[string]string {
+	out := map[string]string{"COUNT": "",
+		"VOLUME": "MEOS states no function for the space-time volume of a moving polygon"}
+	t := temporalTypeByName[typ]
+	switch {
+	case t != nil && t.MFJSON == "MovingPoint":
+		out["LENGTH"], out["TO_TRAJ"], out["INTERSECT"] = "", "", ""
+	case shapeTypes[typ]:
+		out["INTERSECT"] = ""
+		if geographic(typ) || srid == 4326 {
+			why := "MEOS unites the values of a collection in longitude and latitude on the plane alone"
+			out["LENGTH"], out["AREA"] = why, why
+		} else {
+			out["LENGTH"], out["AREA"] = "", ""
+		}
+	}
+	return out
+}
+
+// answeredAggregations is the names geometryAggregations answers, sorted, for
+// an error a client reads.
+func answeredAggregations(m map[string]string) string {
+	var names []string
+	for k, why := range m {
+		if why == "" {
+			names = append(names, k)
+		}
+	}
+	sort.Strings(names)
+	return strings.Join(names, ", ")
+}
 
 // parsePositionsMFJSON extracts the (timestamp, coordinates) positions from a
 // MovingPoint MF-JSON document, handling both the flat form and a sequence set.
@@ -113,7 +171,11 @@ func postGeometryQuery(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var body struct {
-		IntervalMs int `json:"intervalMs"`
+		IntervalMs  int        `json:"intervalMs"`
+		Aggregation string     `json:"aggregation"`
+		Window      windowBody `json:"window"`
+		Region      string     `json:"region"`
+		Engine      string     `json:"engine"`
 	}
 	if r.Body != nil {
 		json.NewDecoder(r.Body).Decode(&body)
@@ -121,6 +183,10 @@ func postGeometryQuery(w http.ResponseWriter, r *http.Request) {
 	interval := time.Duration(body.IntervalMs) * time.Millisecond
 	if interval <= 0 {
 		interval = 500 * time.Millisecond
+	}
+	if agg := strings.ToUpper(strings.TrimSpace(body.Aggregation)); agg != "" {
+		postGeometryAggregate(w, r, cid, tbl, fid, agg, body.Window, body.Region, body.Engine, interval)
+		return
 	}
 
 	qctx, qcancel := context.WithCancel(context.Background())
@@ -132,6 +198,58 @@ func postGeometryQuery(w http.ResponseWriter, r *http.Request) {
 	}
 	spec := QuerySpec{Kind: "geometry", CID: cid, FID: fid, Interval: interval}
 	cq := streamReg.register(spec, nil, events, qcancel)
+	writeJSON(w, 201, cqueryLink(r, cq))
+}
+
+// postGeometryAggregate registers a continuous query that aggregates each
+// window of the feature's temporal geometry, as #postQuery registers one over
+// a temporal property: the aggregation checked against the collection's type
+// (#geometryAggregations), the feature's value read once and handed to the
+// engine, which computes each window by MEOS.
+func postGeometryAggregate(w http.ResponseWriter, r *http.Request, cid, tbl string, fid int, agg string,
+	wb windowBody, region, engine string, interval time.Duration) {
+	_, srid, _ := collectionMeta(r.Context(), cid)
+	typ := collectionType(r.Context(), cid)
+	aggs := geometryAggregations(typ, srid)
+	why, known := aggs[agg]
+	if !known {
+		httpErr(w, 400, "aggregation "+agg+" is not defined for a collection of "+typ+" (supported: "+
+			answeredAggregations(aggs)+")")
+		return
+	}
+	if why != "" {
+		httpErr(w, 400, "aggregation "+agg+" is not answered for a collection of "+typ+": "+why)
+		return
+	}
+	if agg == "INTERSECT" && strings.TrimSpace(region) == "" {
+		httpErr(w, 400, "the INTERSECT aggregation needs a region, a WKT geometry in CRS84")
+		return
+	}
+	win, err := parseWindow(wb)
+	if err != nil {
+		httpErr(w, 400, err.Error())
+		return
+	}
+	var hex *string
+	if err := db.QueryRow(r.Context(), "SELECT asHexWKB(trip) FROM "+ident(tbl)+" WHERE id=$1", fid).
+		Scan(&hex); err != nil || hex == nil {
+		httpErr(w, 404, "feature not found")
+		return
+	}
+	eng, err := engineFor(engine)
+	if err != nil {
+		httpErr(w, 501, err.Error())
+		return
+	}
+	spec := QuerySpec{Kind: "geometry", CID: cid, FID: fid, Agg: agg, Window: win, Interval: interval,
+		Engine: strings.ToLower(strings.TrimSpace(engine)), GeoType: typ, SRID: srid, Value: *hex,
+		Region: region}
+	qctx, qcancel := context.WithCancel(context.Background())
+	cq, err := streamReg.submit(qctx, qcancel, eng, spec, nil)
+	if err != nil {
+		httpErr(w, 400, err.Error())
+		return
+	}
 	writeJSON(w, 201, cqueryLink(r, cq))
 }
 

@@ -488,7 +488,7 @@
             "description": "OK"
           }
         },
-        "summary": "Moving-feature positions as Server-Sent Events (see api/streaming-asyncapi.yaml)",
+        "summary": "Moving-feature positions, or a window aggregate of its temporal geometry, as Server-Sent Events (see api/streaming-asyncapi.yaml)",
         "x-mobilityapi-extension": true
       }
     },

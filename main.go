@@ -1703,7 +1703,7 @@ func apiDoc(w http.ResponseWriter, r *http.Request) {
 				"get":    op("Geometry continuous-query status (the cquery link object)"),
 				"delete": op("Stop a geometry continuous query"),
 			},
-			"/collections/{cid}/items/{fid}/tgsequence/queries/{qid}/stream": get("Moving-feature positions as Server-Sent Events (see api/streaming-asyncapi.yaml)"),
+			"/collections/{cid}/items/{fid}/tgsequence/queries/{qid}/stream": get("Moving-feature positions, or a window aggregate of its temporal geometry, as Server-Sent Events (see api/streaming-asyncapi.yaml)"),
 			"/collections/{cid}/export":                                      get("Bulk lakehouse export: NDJSON, or ?format=parquet (WKB + bbox/time sidecar)"),
 			"/collections/{cid}/coverage":                                    get("OGC API - Coverages: the raster of one period of a raster collection, subset by bbox, datetime, subset and properties, as GeoTIFF or CoverageJSON"),
 			"/collections/{cid}/schema":                                      get("OGC API - Coverages: the fields of a raster collection, one per band"),

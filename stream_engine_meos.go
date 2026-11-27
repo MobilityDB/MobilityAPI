@@ -77,6 +77,17 @@ type meosEngine struct{}
 func (e *meosEngine) Name() string { return "meos-local" }
 
 func (e *meosEngine) Submit(ctx context.Context, spec QuerySpec, source <-chan Instant) (QueryHandle, error) {
+	// A geometry aggregation reads its value on the query's own thread, which
+	// reports whether it could before the query is answered
+	if spec.Kind == "geometry" {
+		h := &meosHandle{results: make(chan Event, 64), status: "running"}
+		ready := make(chan error, 1)
+		go h.run(ctx, spec, source, ready)
+		if err := <-ready; err != nil {
+			return nil, err
+		}
+		return h, nil
+	}
 	if spec.Agg != "" {
 		if !aggregations[spec.Agg] {
 			return nil, fmt.Errorf("unknown aggregation %q", spec.Agg)
@@ -85,7 +96,7 @@ func (e *meosEngine) Submit(ctx context.Context, spec QuerySpec, source <-chan I
 		return nil, fmt.Errorf("unknown operation %q", spec.Op)
 	}
 	h := &meosHandle{results: make(chan Event, 64), status: "running"}
-	go h.run(ctx, spec, source)
+	go h.run(ctx, spec, source, nil)
 	return h, nil
 }
 
@@ -93,12 +104,16 @@ func (e *meosEngine) Submit(ctx context.Context, spec QuerySpec, source <-chan I
 // processes each record, and releases the caches when the query ends. The
 // thread is deliberately never unlocked: the goroutine's exit ends the OS
 // thread, so the caches are initialised and released exactly once on it.
-func (h *meosHandle) run(ctx context.Context, spec QuerySpec, source <-chan Instant) {
+func (h *meosHandle) run(ctx context.Context, spec QuerySpec, source <-chan Instant, ready chan<- error) {
 	runtime.LockOSThread()
 	initMEOSProcess()
 	initMEOSThread()
 	defer finalizeMEOSThread()
 	defer close(h.results)
+	if spec.Kind == "geometry" {
+		h.runGeometry(ctx, spec, ready)
+		return
+	}
 	if spec.Agg != "" {
 		h.runAggregate(ctx, spec, source)
 		return

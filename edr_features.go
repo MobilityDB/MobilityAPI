@@ -8,6 +8,9 @@ package main
 // - /area answers the features whose temporal geometry ever intersects a
 //   POLYGON, /cube those that ever intersect the rectangle of a bbox, and
 //   /trajectory those that ever intersect a LINESTRING, each by eIntersects;
+//   over a collection of geographies the bbox of /cube is the longitude and
+//   latitude box between two meridians and two parallels, decided by
+//   eOverlaps (#lonLatBoxTest);
 // - /radius answers the features that ever come within a distance of a POINT,
 //   on the spheroid, by eDwithin over the moving point read as a tgeogpoint.
 //
@@ -54,6 +57,9 @@ func edrFeatureQueryAnswered(typ, query string) bool {
 	if query == "radius" {
 		_, ok := edrGeodetic(typ, "trip")
 		return ok
+	}
+	if query == "cube" && geographic(typ) {
+		return typeHas(typ, "eOverlaps")
 	}
 	return typeHas(typ, "eIntersects")
 }
@@ -181,6 +187,7 @@ func edrFeatureCondition(ctx context.Context, query, tbl, typ string, srid int,
 	coords := first(q, "coords")
 	var geom string // the query's geometry in CRS84, as SQL over $1
 	var args []any
+	var cube []float64 // the bbox of a cube over a collection of geographies
 	switch query {
 	case "cube":
 		for _, p := range []string{"bbox", "z"} {
@@ -191,6 +198,10 @@ func edrFeatureCondition(ctx context.Context, query, tbl, typ string, srid int,
 		bbox, err := parseBbox(first(q, "bbox"))
 		if err != nil {
 			return "", nil, err
+		}
+		if geographic(typ) {
+			cube = bbox
+			break
 		}
 		geom = "ST_MakeEnvelope($1, $2, $3, $4, 4326)"
 		args = []any{bbox[0], bbox[1], bbox[2], bbox[3]}
@@ -233,11 +244,20 @@ func edrFeatureCondition(ctx context.Context, query, tbl, typ string, srid int,
 		expr = "atTime(trip, " + p + ")"
 		timeBox = " AND trip && " + p
 	}
+	// The bbox of a cube over a collection of geographies is a longitude and
+	// latitude box on the spheroid (#lonLatBoxTest)
+	if cube != nil {
+		test, a, err := lonLatBoxTest(expr, cube, args)
+		if err != nil {
+			return "", nil, err
+		}
+		return test + timeBox, a, nil
+	}
 	// The geometry is read in the collection's system, or as a geography over
 	// the spheroid for a type whose values are geographies, which MobilityDB
 	// refuses to relate to a planar geometry
 	t := temporalTypeByName[typ]
-	geodetic := t != nil && t.Base == "geography"
+	geodetic := geographic(typ)
 	inSystem := func(g string) string {
 		if geodetic {
 			return "CAST(" + g + " AS geography)"

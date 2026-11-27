@@ -19,6 +19,7 @@
       "bandPixelType",
       "eDwithin",
       "eIntersects",
+      "eOverlaps",
       "extent",
       "numBands",
       "stbox",
@@ -48,6 +49,7 @@
       "bandPixelType",
       "eDwithin",
       "eIntersects",
+      "eOverlaps",
       "extent",
       "numBands",
       "stbox",
@@ -73,6 +75,7 @@
       "clip",
       "eDwithin",
       "eIntersects",
+      "eOverlaps",
       "extent",
       "rasterTileValue",
       "rasterUnion",
@@ -137,6 +140,7 @@
       "clip",
       "eDwithin",
       "eIntersects",
+      "eOverlaps",
       "extent",
       "rasterTileValue",
       "rasterUnion",
@@ -157,6 +161,7 @@
       "asMFJSON",
       "atTime",
       "eIntersects",
+      "eOverlaps",
       "stbox"
     ]
   },
@@ -294,6 +299,7 @@
       "asMFJSON",
       "atTime",
       "eIntersects",
+      "eOverlaps",
       "stbox"
     ]
   },
@@ -523,6 +529,7 @@
       "clip",
       "eDwithin",
       "eIntersects",
+      "eOverlaps",
       "extent",
       "rasterTileValue",
       "rasterUnion",
@@ -575,6 +582,7 @@
       "clip",
       "eDwithin",
       "eIntersects",
+      "eOverlaps",
       "extent",
       "rasterTileValue",
       "rasterUnion",

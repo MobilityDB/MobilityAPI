@@ -767,21 +767,35 @@ func itemFilters(tbl, typ string, srid int, q map[string][]string) (where string
 				return "", "", nil, errors.New("invalid bbox number")
 			}
 		}
-		// The box test alone would answer an approximation the filter does not
-		// mean, so a type MobilityDB states no eIntersects for refuses the filter.
-		if !typeHas(typ, "eIntersects") {
+		// A collection of geographies reads the bbox as a longitude and
+		// latitude box on the spheroid (#lonLatBoxTest)
+		if geographic(typ) {
+			if !typeHas(typ, "eOverlaps") {
+				return "", "", nil, errors.New("bbox is not defined for a collection of " + typ +
+					": MobilityDB states no eOverlaps over it")
+			}
+			box := []float64{f[0].(float64), f[1].(float64), f[2].(float64), f[3].(float64)}
+			test, a, e := lonLatBoxTest("trip", box, args)
+			if e != nil {
+				return "", "", nil, e
+			}
+			conds, args = append(conds, test), a
+		} else if !typeHas(typ, "eIntersects") {
+			// The box test alone would answer an approximation the filter does
+			// not mean, so a type MobilityDB states no eIntersects for refuses it
 			return "", "", nil, errors.New("bbox is not defined for a collection of " + typ +
 				": MobilityDB states no eIntersects over it")
+		} else {
+			n := len(args)
+			env := "ST_MakeEnvelope($" + itoa(n+1) + ",$" + itoa(n+2) + ",$" + itoa(n+3) + ",$" + itoa(n+4) + ",$" + itoa(n+5) + ")"
+			// The box test on the index applies where the type's box is an stbox;
+			// a type boxed otherwise (a point cloud's tpcbox) is tested exactly alone
+			test := "eintersects(trip, " + env + ")"
+			if t := temporalTypeByName[typ]; t == nil || t.Box == "stbox" {
+				test = "trip && stbox(" + env + ") AND " + test
+			}
+			add(test, f[0], f[1], f[2], f[3], srid)
 		}
-		n := len(args)
-		env := "ST_MakeEnvelope($" + itoa(n+1) + ",$" + itoa(n+2) + ",$" + itoa(n+3) + ",$" + itoa(n+4) + ",$" + itoa(n+5) + ")"
-		// The box test on the index applies where the type's box is an stbox; a
-		// type boxed otherwise (a point cloud's tpcbox) is tested exactly alone
-		test := "eintersects(trip, " + env + ")"
-		if t := temporalTypeByName[typ]; t == nil || t.Box == "stbox" {
-			test = "trip && stbox(" + env + ") AND " + test
-		}
-		add(test, f[0], f[1], f[2], f[3], srid)
 	}
 	// OGC uses lowercase "subtrajectory"; accept the camelCase form too.
 	sub := first(q, "subtrajectory")
@@ -855,6 +869,14 @@ func streamItems(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer rows.Close()
+	// The first row is read before the answer is begun, so a query MobilityDB
+	// refuses is answered as refused and not as a page of no feature, as
+	// #edrWriteFeatures reads it
+	more := rows.Next()
+	if !more && rows.Err() != nil {
+		httpErr(w, 400, "the items cannot be read: "+rows.Err().Error())
+		return
+	}
 
 	cid := r.PathValue("cid")
 	w.Header().Set("Content-Type", "application/json")
@@ -863,7 +885,7 @@ func streamItems(w http.ResponseWriter, r *http.Request) {
 	bw.WriteString(`{"type":"FeatureCollection","features":[`)
 	var lastID int64
 	n := 0
-	for rows.Next() {
+	for ; more; more = rows.Next() {
 		id, props, bx, tmin, tmax, tgeom, serr := scanFeatureRow(rows, generic)
 		if serr != nil {
 			break

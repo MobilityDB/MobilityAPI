@@ -95,7 +95,7 @@ type serialization struct {
 // generator records it per type, and trip_functions_test.go holds this list to
 // the functions the tier's SQL calls.
 var featureFunctions = []string{
-	"appendInstant", "asBinary", "asMFJSON", "atTime", "cumulativeLength",
+	"appendInstant", "asBinary", "asHexWKB", "asMFJSON", "atTime", "cumulativeLength",
 	"deleteTime", "eDwithin", "eIntersects", "eOverlaps", "extent", "getTime", "interp", "merge", "numInstants",
 	"numSequences", "rasterTileValue", "rasterValue", "sequenceN", "setSRID",
 	"speed", "tgeogpoint", "timeSpan", "trajectory", "transform", "tsample",

@@ -54,6 +54,14 @@ type QuerySpec struct {
 	Ptype    string        // the property's OGC type (TReal | TInteger | TText | TBoolean)
 	Interval time.Duration // pacing between emitted records
 	Engine   string        // per-query engine override ("flink"|"kafka"|"meos-local"); empty = the process default
+	// A geometry query aggregating its windows (#geometryAggregations) reads the
+	// feature's temporal geometry of type GeoType, held in the collection's
+	// system SRID, as the hex WKB Value, and an INTERSECT reads the WKT Region
+	// in CRS84
+	GeoType string
+	SRID    int
+	Value   string
+	Region  string
 }
 
 // Window is a continuous-query window (OGC MF Part 4). COUNT groups a fixed
@@ -65,6 +73,32 @@ type Window struct {
 	Unit    string // time unit for TUMBLING/HOPPING (SECONDS, MINUTES, HOURS)
 	Hop     int    // advance for HOPPING
 	HopUnit string // time unit for the hop
+}
+
+// windowBody is the window member of a continuous query's body.
+type windowBody struct {
+	Type    string `json:"type"`
+	Size    int    `json:"size"`
+	Unit    string `json:"unit"`
+	Hop     int    `json:"hop"`
+	HopUnit string `json:"hopUnit"`
+}
+
+// parseWindow reads the window of a continuous query, a property's or a
+// geometry's alike, refusing one Part 4 does not define.
+func parseWindow(b windowBody) (Window, error) {
+	wtype := strings.ToUpper(strings.TrimSpace(b.Type))
+	if wtype != "COUNT" && wtype != "TUMBLING" && wtype != "HOPPING" {
+		return Window{}, errors.New("window type must be COUNT, TUMBLING or HOPPING")
+	}
+	if b.Size <= 0 {
+		return Window{}, errors.New("window size must be a positive integer")
+	}
+	if wtype == "HOPPING" && b.Hop <= 0 {
+		return Window{}, errors.New("a HOPPING window requires a positive hop")
+	}
+	return Window{Type: wtype, Size: b.Size, Unit: strings.ToUpper(b.Unit), Hop: b.Hop,
+		HopUnit: strings.ToUpper(b.HopUnit)}, nil
 }
 
 // aggByType is the catalogue of window aggregations valid per property type
@@ -552,19 +586,13 @@ func postQuery(w http.ResponseWriter, r *http.Request) {
 	ogc := tt.ogc
 
 	var body struct {
-		Operation   string   `json:"operation"`
-		Arg         *float64 `json:"arg"`
-		Aggregation string   `json:"aggregation"`
-		Window      struct {
-			Type    string `json:"type"`
-			Size    int    `json:"size"`
-			Unit    string `json:"unit"`
-			Hop     int    `json:"hop"`
-			HopUnit string `json:"hopUnit"`
-		} `json:"window"`
-		Live       bool   `json:"live"`
-		IntervalMs int    `json:"intervalMs"`
-		Engine     string `json:"engine"`
+		Operation   string     `json:"operation"`
+		Arg         *float64   `json:"arg"`
+		Aggregation string     `json:"aggregation"`
+		Window      windowBody `json:"window"`
+		Live        bool       `json:"live"`
+		IntervalMs  int        `json:"intervalMs"`
+		Engine      string     `json:"engine"`
 	}
 	if r.Body != nil {
 		json.NewDecoder(r.Body).Decode(&body)
@@ -582,24 +610,13 @@ func postQuery(w http.ResponseWriter, r *http.Request) {
 			httpErr(w, 400, "aggregation "+body.Aggregation+" is not defined for "+ogc+" (supported: "+supportedAggs(ogc)+")")
 			return
 		}
-		wtype := strings.ToUpper(strings.TrimSpace(body.Window.Type))
-		if wtype != "COUNT" && wtype != "TUMBLING" && wtype != "HOPPING" {
-			httpErr(w, 400, "window type must be COUNT, TUMBLING or HOPPING")
-			return
-		}
-		if body.Window.Size <= 0 {
-			httpErr(w, 400, "window size must be a positive integer")
-			return
-		}
-		if wtype == "HOPPING" && body.Window.Hop <= 0 {
-			httpErr(w, 400, "a HOPPING window requires a positive hop")
+		win, err := parseWindow(body.Window)
+		if err != nil {
+			httpErr(w, 400, err.Error())
 			return
 		}
 		spec.Agg = agg
-		spec.Window = Window{
-			Type: wtype, Size: body.Window.Size, Unit: strings.ToUpper(body.Window.Unit),
-			Hop: body.Window.Hop, HopUnit: strings.ToUpper(body.Window.HopUnit),
-		}
+		spec.Window = win
 	} else {
 		// lifted transform — defined for TReal (tfloat) properties
 		if ogc != "TReal" {

@@ -365,6 +365,7 @@
     "path": "/collections/{cid}/items/{fid}/tgsequence/queries",
     "extension": true,
     "functions": [
+      "asHexWKB",
       "asMFJSON",
       "transform"
     ]

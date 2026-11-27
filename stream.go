@@ -62,6 +62,9 @@ type QuerySpec struct {
 	SRID    int
 	Value   string
 	Region  string
+	// Topic is the Kafka topic the query publishes its results to, none when
+	// empty (#publishToKafka)
+	Topic string
 }
 
 // Window is a continuous-query window (OGC MF Part 4). COUNT groups a fixed
@@ -397,6 +400,11 @@ func (r *streamRegistry) register(spec QuerySpec, handle QueryHandle, events <-c
 	cq := &contQuery{id: id, spec: spec, handle: handle, events: events, created: time.Now().UTC(), cancel: cancel, subs: map[chan Event]struct{}{}}
 	r.queries[id] = cq
 	r.mu.Unlock()
+	// The Kafka channel subscribes before the fan-out starts, so it reads every
+	// result
+	if spec.Topic != "" {
+		go publishToKafka(cq, cq.subscribe())
+	}
 	go cq.pump()
 	return cq
 }
@@ -458,6 +466,7 @@ func cqueryLink(r *http.Request, cq *contQuery) map[string]any {
 		"queryId":   cq.id,
 		"href":      stream,
 		"channel":   cq.basePath() + "/" + cq.id + "/stream",
+		"topic":     cq.spec.Topic,
 		"status":    cq.status(),
 		"type":      "text/event-stream",
 		"operation": cq.spec.Op,
@@ -597,6 +606,7 @@ func postQuery(w http.ResponseWriter, r *http.Request) {
 		Live        bool       `json:"live"`
 		IntervalMs  int        `json:"intervalMs"`
 		Engine      string     `json:"engine"`
+		Topic       string     `json:"topic"`
 	}
 	if r.Body != nil {
 		json.NewDecoder(r.Body).Decode(&body)
@@ -606,8 +616,12 @@ func postQuery(w http.ResponseWriter, r *http.Request) {
 		interval = 500 * time.Millisecond
 	}
 
+	if err := checkKafkaTopic(body.Topic); err != nil {
+		httpErr(w, 400, err.Error())
+		return
+	}
 	spec := QuerySpec{CID: cid, FID: fid, Pname: name, Ptype: ogc, Interval: interval,
-		Engine: strings.ToLower(strings.TrimSpace(body.Engine))}
+		Engine: strings.ToLower(strings.TrimSpace(body.Engine)), Topic: body.Topic}
 	if agg := strings.ToUpper(strings.TrimSpace(body.Aggregation)); agg != "" {
 		// windowed aggregation, valid per property type
 		if !aggByType[ogc][agg] {

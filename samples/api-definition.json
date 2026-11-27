@@ -457,7 +457,7 @@
             "description": "OK"
           }
         },
-        "summary": "Register a geometry continuous query streaming the moving feature's position",
+        "summary": "Register a geometry continuous query streaming the moving feature's position, or, with aggregation + window, one aggregate per window of its temporal geometry; topic publishes the results to that Kafka topic of MFAPI_KAFKA_BROKERS",
         "x-mobilityapi-extension": true
       }
     },
@@ -668,7 +668,7 @@
             "description": "OK"
           }
         },
-        "summary": "Register a continuous query (MF Part 4): a lifted transform (operation), or a windowed aggregation (aggregation + window: COUNT | TUMBLING | HOPPING). Set live:true to source from pushed records",
+        "summary": "Register a continuous query (MF Part 4): a lifted transform (operation), or a windowed aggregation (aggregation + window: COUNT | TUMBLING | HOPPING). Set live:true to source from pushed records, and topic to publish the results to that Kafka topic of MFAPI_KAFKA_BROKERS",
         "x-conformance-class": "http://www.opengis.net/spec/ogcapi-movingfeatures-4/1.0/conf/cquery"
       }
     },

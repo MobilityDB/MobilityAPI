@@ -21,6 +21,16 @@ servers:
       over a WebSocket, a MobilityAPI extension: each result is one text
       message, the JSON object an SSE event carries, and the connection closes
       with a normal closure when the query stops.
+  kafka:
+    host: '{brokers}'
+    protocol: kafka
+    description: >-
+      The brokers MFAPI_KAFKA_BROKERS names, to which a continuous query
+      registered with a topic publishes its results, a MobilityAPI extension:
+      one record per result, keyed by the query's id, its value the JSON object
+      an SSE event carries.
+    variables:
+      brokers: { description: 'the comma-separated host:port of MFAPI_KAFKA_BROKERS' }
 
 channels:
   propertyResults:
@@ -83,6 +93,23 @@ channels:
       geometryWindowAggregate:
         $ref: '#/components/messages/geometryWindowAggregate'
 
+  kafkaResults:
+    address: '{topic}'
+    description: The results of a continuous query registered with a topic.
+    servers:
+      - $ref: '#/servers/kafka'
+    parameters:
+      topic: { description: the topic the query names }
+    messages:
+      transform:
+        $ref: '#/components/messages/transform'
+      windowAggregate:
+        $ref: '#/components/messages/windowAggregate'
+      position:
+        $ref: '#/components/messages/position'
+      geometryWindowAggregate:
+        $ref: '#/components/messages/geometryWindowAggregate'
+
 operations:
   receivePropertyResults:
     action: receive
@@ -96,6 +123,9 @@ operations:
   receiveGeometryResultsWebSocket:
     action: receive
     channel: { $ref: '#/channels/geometryResultsWebSocket' }
+  receiveKafkaResults:
+    action: receive
+    channel: { $ref: '#/channels/kafkaResults' }
 
 components:
   messages:

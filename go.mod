@@ -13,6 +13,8 @@ require (
 	github.com/mochi-mqtt/server/v2 v2.7.9
 	github.com/parquet-go/parquet-go v0.30.1
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
+	github.com/twmb/franz-go v1.19.5
+	github.com/twmb/franz-go/pkg/kfake v0.0.0-20250603004440-37eecbb8927f
 )
 
 require (
@@ -39,8 +41,10 @@ require (
 	github.com/parquet-go/jsonlite v1.0.0 // indirect
 	github.com/pierrec/lz4/v4 v4.1.22 // indirect
 	github.com/rs/xid v1.4.0 // indirect
+	github.com/twmb/franz-go/pkg/kmsg v1.11.2 // indirect
 	github.com/twpayne/go-geom v1.6.1 // indirect
 	github.com/zeebo/xxh3 v1.0.2 // indirect
+	golang.org/x/crypto v0.42.0 // indirect
 	golang.org/x/exp v0.0.0-20250408133849-7e4ce0ab07d0 // indirect
 	golang.org/x/mod v0.27.0 // indirect
 	golang.org/x/net v0.44.0 // indirect

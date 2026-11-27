@@ -176,6 +176,7 @@ func postGeometryQuery(w http.ResponseWriter, r *http.Request) {
 		Window      windowBody `json:"window"`
 		Region      string     `json:"region"`
 		Engine      string     `json:"engine"`
+		Topic       string     `json:"topic"`
 	}
 	if r.Body != nil {
 		json.NewDecoder(r.Body).Decode(&body)
@@ -184,8 +185,13 @@ func postGeometryQuery(w http.ResponseWriter, r *http.Request) {
 	if interval <= 0 {
 		interval = 500 * time.Millisecond
 	}
+	if err := checkKafkaTopic(body.Topic); err != nil {
+		httpErr(w, 400, err.Error())
+		return
+	}
 	if agg := strings.ToUpper(strings.TrimSpace(body.Aggregation)); agg != "" {
-		postGeometryAggregate(w, r, cid, tbl, fid, agg, body.Window, body.Region, body.Engine, interval)
+		postGeometryAggregate(w, r, cid, tbl, fid, agg, body.Window, body.Region, body.Engine, body.Topic,
+			interval)
 		return
 	}
 
@@ -196,7 +202,7 @@ func postGeometryQuery(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, 400, err.Error())
 		return
 	}
-	spec := QuerySpec{Kind: "geometry", CID: cid, FID: fid, Interval: interval}
+	spec := QuerySpec{Kind: "geometry", CID: cid, FID: fid, Interval: interval, Topic: body.Topic}
 	cq := streamReg.register(spec, nil, events, qcancel)
 	writeJSON(w, 201, cqueryLink(r, cq))
 }
@@ -207,7 +213,7 @@ func postGeometryQuery(w http.ResponseWriter, r *http.Request) {
 // (#geometryAggregations), the feature's value read once and handed to the
 // engine, which computes each window by MEOS.
 func postGeometryAggregate(w http.ResponseWriter, r *http.Request, cid, tbl string, fid int, agg string,
-	wb windowBody, region, engine string, interval time.Duration) {
+	wb windowBody, region, engine, topic string, interval time.Duration) {
 	_, srid, _ := collectionMeta(r.Context(), cid)
 	typ := collectionType(r.Context(), cid)
 	aggs := geometryAggregations(typ, srid)
@@ -243,7 +249,7 @@ func postGeometryAggregate(w http.ResponseWriter, r *http.Request, cid, tbl stri
 	}
 	spec := QuerySpec{Kind: "geometry", CID: cid, FID: fid, Agg: agg, Window: win, Interval: interval,
 		Engine: strings.ToLower(strings.TrimSpace(engine)), GeoType: typ, SRID: srid, Value: *hex,
-		Region: region}
+		Region: region, Topic: topic}
 	qctx, qcancel := context.WithCancel(context.Background())
 	cq, err := streamReg.submit(qctx, qcancel, eng, spec, nil)
 	if err != nil {

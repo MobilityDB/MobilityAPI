@@ -1691,7 +1691,7 @@ func apiDoc(w http.ResponseWriter, r *http.Request) {
 			},
 			"/collections/{cid}/items/{fid}/tproperties/{pname}/queries": map[string]any{
 				"get":  op("List the continuous queries on a temporal property"),
-				"post": op("Register a continuous query (MF Part 4): a lifted transform (operation), or a windowed aggregation (aggregation + window: COUNT | TUMBLING | HOPPING). Set live:true to source from pushed records"),
+				"post": op("Register a continuous query (MF Part 4): a lifted transform (operation), or a windowed aggregation (aggregation + window: COUNT | TUMBLING | HOPPING). Set live:true to source from pushed records, and topic to publish the results to that Kafka topic of MFAPI_KAFKA_BROKERS"),
 			},
 			"/collections/{cid}/items/{fid}/tproperties/{pname}/queries/{qid}": map[string]any{
 				"get":    op("Continuous-query status (the cquery link object)"),
@@ -1702,7 +1702,7 @@ func apiDoc(w http.ResponseWriter, r *http.Request) {
 			"/collections/{cid}/items/{fid}/tproperties/{pname}/ingest":               map[string]any{"post": op("Push a live record ({datetime, value}) to the live queries on the property")},
 			"/collections/{cid}/items/{fid}/tgsequence/queries": map[string]any{
 				"get":  op("List the geometry (position) continuous queries of a feature"),
-				"post": op("Register a geometry continuous query streaming the moving feature's position"),
+				"post": op("Register a geometry continuous query streaming the moving feature's position, or, with aggregation + window, one aggregate per window of its temporal geometry; topic publishes the results to that Kafka topic of MFAPI_KAFKA_BROKERS"),
 			},
 			"/collections/{cid}/items/{fid}/tgsequence/queries/{qid}": map[string]any{
 				"get":    op("Geometry continuous-query status (the cquery link object)"),

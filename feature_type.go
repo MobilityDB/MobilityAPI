@@ -12,6 +12,7 @@ package main
 import (
 	"context"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -148,4 +149,41 @@ func staticGeometry(typ, expr string) string {
 		return "CAST(ST_AsGeoJSON(" + path + ") AS text)"
 	}
 	return "CAST(NULL AS text)"
+}
+
+// geographic reports whether the values of the temporal type typ are
+// geographies, which MobilityDB relates on the spheroid and refuses to relate
+// to a planar geometry.
+func geographic(typ string) bool {
+	t := temporalTypeByName[typ]
+	return t != nil && t.Base == "geography"
+}
+
+// lonLatBoxTest is the SQL that tests whether the temporal geometry expr of a
+// collection of geographies ever lies in the longitude and latitude box bbox,
+// minLon,minLat,maxLon,maxLat in CRS84: the region between two meridians and
+// two parallels, which MEOS reads as a geodetic stbox and eOverlaps decides
+// exactly, a moving point along its geodesics and a geography by the bounds of
+// the box. A box whose minLon exceeds maxLon crosses the antimeridian, as OGC
+// API - Features reads it; MEOS orders the bounds of a box, so such a box is
+// read as the two boxes either side of the antimeridian. Each box is passed in
+// args, which the answer extends, and tested by the index first, as #boxOf
+// boxes a feature.
+func lonLatBoxTest(expr string, bbox []float64, args []any) (string, []any, error) {
+	if bbox[1] > bbox[3] {
+		return "", nil, statusErr{400, "the bbox's minLat exceeds its maxLat"}
+	}
+	lons := [][2]float64{{bbox[0], bbox[2]}}
+	if bbox[0] > bbox[2] {
+		lons = [][2]float64{{bbox[0], 180}, {-180, bbox[2]}}
+	}
+	num := func(f float64) string { return strconv.FormatFloat(f, 'g', -1, 64) }
+	var tests []string
+	for _, l := range lons {
+		args = append(args, "SRID=4326;GEODSTBOX X(("+num(l[0])+","+num(bbox[1])+"),("+num(l[1])+","+
+			num(bbox[3])+"))")
+		box := "CAST($" + itoa(len(args)) + " AS stbox)"
+		tests = append(tests, "(trip && "+box+" AND eOverlaps("+expr+", "+box+"))")
+	}
+	return "(" + strings.Join(tests, " OR ") + ")", args, nil
 }

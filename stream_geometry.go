@@ -38,11 +38,15 @@ var shapeTypes = map[string]bool{"tgeometry": true, "tgeography": true, "trgeome
 //     covers during the window, the union of its values or the region its
 //     motion sweeps, each overlap counted once; INTERSECT. MEOS unites them on
 //     the plane alone, so a collection in longitude and latitude has neither.
-//   - VOLUME, refused: MEOS states no function for the space-time volume of a
-//     moving polygon.
+//   - VOLUME of a line or polygon (#shapeTypes): its space-time volume over the
+//     window, the integral of its area over the time, in the square units of
+//     the collection times seconds (#spaceTimeVolume). Values at two instants
+//     never meet, so no union is computed and a collection of geographies is
+//     measured on the spheroid; a geometry in longitude and latitude has no
+//     area MEOS measures but on the plane, so it has no volume.
 func geometryAggregations(typ string, srid int) map[string]string {
 	out := map[string]string{"COUNT": "",
-		"VOLUME": "MEOS states no function for the space-time volume of a moving polygon"}
+		"VOLUME": "a moving point has no area, so no space-time volume"}
 	t := temporalTypeByName[typ]
 	switch {
 	case t != nil && t.MFJSON == "MovingPoint":
@@ -54,6 +58,10 @@ func geometryAggregations(typ string, srid int) map[string]string {
 			out["LENGTH"], out["AREA"] = why, why
 		} else {
 			out["LENGTH"], out["AREA"] = "", ""
+		}
+		out["VOLUME"] = ""
+		if srid == 4326 && !geographic(typ) {
+			out["VOLUME"] = "MEOS measures the area of a geometry in longitude and latitude on the plane alone"
 		}
 	}
 	return out

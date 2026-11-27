@@ -166,13 +166,16 @@ components:
         properties:
           windowStart: { type: string }
           windowEnd: { type: string }
-          aggregation: { type: string, enum: [COUNT, LENGTH, AREA, INTERSECT, TO_TRAJ] }
+          aggregation: { type: string, enum: [COUNT, LENGTH, AREA, VOLUME, INTERSECT, TO_TRAJ] }
           value:
             description: >-
               COUNT, the instants of the window; LENGTH, the distance a moving
               point travels, or the length a line covers, each overlap counted
               once; AREA, the area a line or polygon covers, each overlap
-              counted once; INTERSECT, whether the window meets the query's
+              counted once; VOLUME, the space-time volume of a line or
+              polygon, the integral of its area over the window's time, in
+              its square units times seconds; INTERSECT, whether the window
+              meets the query's
               region; TO_TRAJ, the path of the window in GeoJSON (WGS 84)
             oneOf:
               - { type: number }
